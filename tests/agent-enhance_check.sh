@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke-test for the `agent-enhance` v0.3.0 script.
+# Smoke-test for the `agent-enhance` v0.3.1 script.
 #
 # Usage: bash tests/agent-enhance_check.sh <path-to-bin/agent-enhance>
 #
@@ -28,8 +28,8 @@ bash -n "$SCRIPT" || fail "bash -n failed"
 pass "syntactically valid"
 
 # --- 2. version / help ---
-[[ "$("$SCRIPT" --version)" == "agent-enhance 0.3.0" ]] || fail "--version"
-pass "--version reports 0.3.0"
+[[ "$("$SCRIPT" --version)" == "agent-enhance 0.3.1" ]] || fail "--version"
+pass "--version reports 0.3.1"
 "$SCRIPT" --help >/dev/null 2>&1 || fail "--help"
 pass "--help exits 0"
 
@@ -55,6 +55,36 @@ printf 'ORIGINAL KEEP ME\n' > "$INJ/AGENTS.md"
 head -1 "$INJ/AGENTS.md" | grep -q "ORIGINAL KEEP ME" || fail "original not preserved"
 grep -q "AGENT-ENHANCE:BEGIN" "$INJ/AGENTS.md" || fail "markers missing on injection"
 pass "existing AGENTS.md preserved + protocols injected with markers"
+
+# --- 4b. git working-tree safety gate ---
+make_clean_repo() {  # $1 = dir
+  mkdir -p "$1"
+  ( cd "$1" && git init -q && touch base.txt && git add base.txt \
+      && git -c user.email=t@t -c user.name=t commit -qm init --no-gpg-sign )
+}
+# clean repo -> proceeds
+GC="$BASE/gitclean"; make_clean_repo "$GC"
+"$SCRIPT" "$GC" >/dev/null 2>&1 || fail "clean repo did not proceed"
+pass "clean repo -> proceeds"
+# dirty repo, no flag -> refuses non-zero, no files
+GD="$BASE/gitdirty"; make_clean_repo "$GD"
+echo "dirty" > "$GD/dirty.txt"
+"$SCRIPT" "$GD" >/dev/null 2>&1 && fail "dirty repo should refuse"
+[ ! -d "$GD/.agents" ] || fail "dirty repo wrote files despite refusal"
+pass "dirty repo -> refuses, no files written"
+# dirty repo + --allow-dirty -> proceeds with warning
+"$SCRIPT" --allow-dirty "$GD" 2>/tmp/gs_allow.err || fail "--allow-dirty should proceed"
+grep -q "SAFETY OVERRIDE" /tmp/gs_allow.err || fail "--allow-dirty missing warning"
+rm -f /tmp/gs_allow.err
+pass "dirty repo + --allow-dirty -> proceeds with warning"
+# non-git dir -> warns and proceeds
+NG="$BASE/nongit"; mkdir -p "$NG"
+"$SCRIPT" "$NG" >/dev/null 2>&1 || fail "non-git dir should proceed"
+[ -d "$NG/.agents" ] || fail "non-git dir did not proceed"
+pass "non-git dir -> proceeds"
+# dry-run on dirty reflects refusal
+"$SCRIPT" --dry-run "$GD" >/dev/null 2>&1 && fail "dry-run dirty should refuse"
+pass "dry-run on dirty reflects refusal"
 
 # --- 5. synthesize: proposal + handoff, live AGENTS untouched ---
 SYN="$BASE/syn"; mkdir -p "$SYN"
@@ -106,4 +136,4 @@ pass "dry-run wrote nothing"
 pass "re-run is idempotent (single handoff, live AGENTS still untouched)"
 
 echo
-echo "PASS: agent-enhance v0.3.0 behavioural checks verified."
+echo "PASS: agent-enhance v0.3.1 behavioural checks verified."

@@ -6,9 +6,10 @@ This directory contains the smoke-test suites for the Copier template and the
 ## Files
 - `generate_and_check.sh` — generates a project with recommended answers and asserts the
   required structure and protocols are present.
-- `agent-enhance_check.sh` — asserts the v0.3.0 behavioural guarantees of `bin/agent-enhance`
+- `agent-enhance_check.sh` — asserts the v0.3.1 behavioural guarantees of `bin/agent-enhance`
   (syntax, version/help, empty-dir structure, protocol injection, `--synthesize` incl.
-  broader discovery + size/exclusion rules, `--dry-run`, idempotency).
+  broader discovery + size/exclusion rules, git working-tree safety gate, `--dry-run`,
+  idempotency).
 
 ## Running
 From the template root:

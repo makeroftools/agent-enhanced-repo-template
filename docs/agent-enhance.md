@@ -11,6 +11,8 @@ under way.
 - **Idempotent** — safe to re-run; existing files are left untouched.
 - **Auditable** — the enhancement itself is recorded in `decisions.md`.
 - **Explicit protocols** — every generated `AGENTS.md` enforces Session Start and Handoff.
+- **Git-safety gate** — in a Git repository, a dirty working tree causes a refusal by
+default; proceeding is an explicit, conscious choice (`--allow-dirty`).
 
 ## Install
 
@@ -45,6 +47,7 @@ Run inside a repository, or pass a target directory. `TARGET_DIR` defaults to `.
 | `-n, --dry-run` | Show what would be done without writing files
 | `--synthesize` | Produce `AGENTS.md.proposed` + review handoff instead of modifying `AGENTS.md` |
 | `--force-protocols` | Note that markers already exist (conservative)
+| `--allow-dirty` | Permit operation on a dirty Git working tree (default is to refuse)
 | `--multi-agent` | Include role charters (coordinator, implementer, reviewer)
 | `--sample-skill` | Include a sample Skill under `.agents/skills/`
 | `-h, --help` | Show help
@@ -106,6 +109,23 @@ agent-enhance --synthesize --dry-run
 
 This is the conservative path for protecting existing knowledge: a human or reviewing
 agent inspects and finalises the proposal before it becomes `AGENTS.md`.
+
+## Git working-tree safety check
+
+When the target directory is a Git repository, `agent-enhance` inspects the working
+tree for staged, unstaged, and untracked (non-ignored) changes:
+
+- **Clean tree** — proceeds normally, with no extra output.
+- **Dirty tree (default)** — refuses to proceed and exits non-zero, stating that
+  `--allow-dirty` is required to override. This keeps enhancements reviewable and
+  prevents mixing with unrelated local changes.
+- **Dirty tree with `--allow-dirty`** — emits an explicit safety-override warning, then
+  continues.
+
+When the target is **not** a Git repository, the existing warning is shown and
+processing continues (unchanged). `--dry-run` always performs the status check first and
+reports the resulting decision without writing files. Git state is never modified —
+nothing is staged, committed, or stashed.
 
 ## What it writes
 

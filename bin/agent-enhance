@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # agent-enhance — Add AI-agent-native structure and protocols to an existing repository
 # Mission-critical: additive, idempotent, non-destructive, auditable
-# Version: 0.3.0
+# Version: 0.3.1
 # Source: https://github.com/makeroftools/agent-enhanced-repo-template
 
 set -euo pipefail
 
-VERSION="0.3.0"
+VERSION="0.3.1"
 
 DRY_RUN=false
 SYNTHESIZE=false
 FORCE_PROTOCOLS=false
 INCLUDE_MULTI_AGENT=false
 INCLUDE_SAMPLE_SKILL=false
+ALLOW_DIRTY=false
 TARGET_DIR="."
 MARKER_BEGIN="<!-- AGENT-ENHANCE:BEGIN -->"
 MARKER_END="<!-- AGENT-ENHANCE:END -->"
@@ -89,7 +90,7 @@ append_if_missing() {
 
 usage() {
   cat <<'USAGE'
-agent-enhance v0.3.0
+agent-enhance v0.3.1
 Add AI-agent-native structure and mandatory protocols to an existing repository.
 
 Usage: agent-enhance [OPTIONS] [TARGET_DIR]
@@ -103,6 +104,8 @@ Options:
                              inlined, large ones referenced, and a full discovery
                              inventory is included. The live AGENTS.md is never
                              overwritten.
+  --allow-dirty              Permit operation on a dirty Git working tree
+                             (default is to refuse)
   --multi-agent              Include role charters (coordinator, implementer, reviewer)
   --sample-skill             Include a sample Skill under .agents/skills/
   -h, --help                 Show this help
@@ -174,6 +177,7 @@ while [[ $# -gt 0 ]]; do
     -n|--dry-run) DRY_RUN=true; shift ;;
     --synthesize) SYNTHESIZE=true; shift ;;
     --force-protocols) FORCE_PROTOCOLS=true; shift ;;
+    --allow-dirty) ALLOW_DIRTY=true; shift ;;
     --multi-agent) INCLUDE_MULTI_AGENT=true; shift ;;
     --sample-skill) INCLUDE_SAMPLE_SKILL=true; shift ;;
     -*) die "unknown option: $1" ;;
@@ -195,6 +199,19 @@ info "Detected language/stack: $LANG"
 
 if is_git_repo "$TARGET_DIR"; then
   info "Git repository detected"
+  # --- Git working-tree status gate (v0.3.1) ---
+  # Detect staged, unstaged, or untracked (non-ignored) changes. Clean tree proceeds;
+  # dirty tree refuses by default unless --allow-dirty is given. This mirrors how
+  # `git status --porcelain` behaves: placeholder-free and safe to parse.
+  if [[ -z "$(git status --porcelain 2>/dev/null)" ]]; then
+    :  # clean tree — proceed; keep output noise-free
+  else
+    if $ALLOW_DIRTY; then
+      warn "SAFETY OVERRIDE: the Git working tree is dirty and you have chosen to proceed with --allow-dirty. Review the changes before committing."
+    else
+      die "The Git working tree is dirty (staged/unstaged/untracked changes present). Refusing to proceed to keep enhancements reviewable. Commit or stash your changes, or re-run with --allow-dirty to override."
+    fi
+  fi
 else
   warn "Not a git repository — continuing anyway (recommended to run inside a git repo)"
 fi
