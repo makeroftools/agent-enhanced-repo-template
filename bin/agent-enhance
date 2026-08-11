@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # agent-enhance — Add AI-agent-native structure and protocols to an existing repository
 # Mission-critical: additive, idempotent, non-destructive, auditable, reviewable
-# Version: 0.4.0
+# Version: 0.5.0
 # Source: https://github.com/makeroftools/agent-enhanced-repo-template
 
 set -euo pipefail
 
-VERSION="0.4.0"
+VERSION="0.5.0"
 
 DRY_RUN=false
 SYNTHESIZE=false
@@ -58,18 +58,6 @@ write_file() {
   info "wrote: $path"
 }
 
-write_proposed_file() {
-  local path="$1"
-  local content="$2"
-  if $DRY_RUN; then
-    info "[dry-run] would write: $path"
-    return 0
-  fi
-  mkdir -p "$(dirname "$path")"
-  printf '%s\n' "$content" > "$path"
-  info "wrote: $path"
-}
-
 append_if_missing() {
   local path="$1"
   local block="$2"
@@ -90,23 +78,22 @@ append_if_missing() {
 
 usage() {
   cat <<'USAGE'
-agent-enhance v0.4.0
+agent-enhance v0.5.0
 Add AI-agent-native structure and mandatory protocols to an existing repository.
 
 Usage: agent-enhance [OPTIONS] [TARGET_DIR]
 
 Options:
   -n, --dry-run              Show what would be done without writing files
-  --synthesize               Produce AGENTS.md.proposed + review handoff instead of
-                             modifying AGENTS.md. Uses broader safe discovery across
-                             docs/, .github/, .cursor/, .agents/, adr/, decisions/,
-                             policies/, runbooks/ and similar. Discovered sources are
-                             classified into tiers: durable, high-signal material
-                             (canon, skills, current/active) is elevated into a
-                             prioritized synthesis; historical and archive material
-                             is inventoried and referenced, not bulk-inlined. A
-                             complete Discovery Inventory is always included. The
-                             live AGENTS.md is never overwritten.
+  --synthesize               Synthesize-and-apply: rewrite the live AGENTS.md to a lean,
+                             protocol-compliant version that elevates Canon / Skills /
+                             Current material. Uses broader safe discovery across docs/,
+                             .github/, .cursor/, .agents/, adr/, decisions/, policies/,
+                             runbooks/ and similar. Sources are classified into tiers;
+                             historical and archive material is inventoried and referenced,
+                             never bulk-inlined. All discovered knowledge is preserved under
+                             .agents/references/ (complete inventory + full sources). Run
+                             with --dry-run first to preview.
   --allow-dirty              Permit operation on a dirty Git working tree
                              (default is to refuse)
   --multi-agent              Include role charters (coordinator, implementer, reviewer)
@@ -120,7 +107,8 @@ Design principles (mission-critical):
   - Explicit protocols are mandatory
   - The enhancement itself is recorded as a decision
   - Existing content is preserved; nothing discovered may become invisible
-  - In --synthesize mode, nothing is overwritten: a reviewable proposal is produced
+  - In --synthesize mode, the live AGENTS.md is rewritten lean; everything discovered
+    is preserved under .agents/references/ and no source file is deleted
 USAGE
 }
 
@@ -194,7 +182,7 @@ cd "$TARGET_DIR"
 info "Target repository: $TARGET_DIR"
 $DRY_RUN && info "Mode: DRY-RUN (no files will be written)"
 if $SYNTHESIZE; then
-  info "Mode: SYNTHESIZE (proposal only — live AGENTS.md will not be modified)"
+  info "Mode: SYNTHESIZE-APPLY (rewrites the live AGENTS.md lean; all discovered knowledge is preserved under .agents/references/)"
 fi
 
 LANG=$(detect_language "$TARGET_DIR")
@@ -850,156 +838,208 @@ build_body() {
   printf '%s' "$body"
 }
 
+# Render the lean, always-on live AGENTS.md for the synthesize-and-apply path.
+# The live file stays small: mandatory protocols first, then a short architecture
+# note, the elevated (Canon / Skills / Current) synthesis, and pointers to the
+# durable knowledge under .agents/references/. Historical-archive content is NOT
+# bulk-inlined — it lives by reference in synthesis-inventory.md. `count` is the
+# number of sources preserved, `synthesis` the elevated-synthesis body.
+#
+# The elevated body is appended by concatenation (not ${var//old/$new}), because a
+# literal `&` inside inlined source content would otherwise be substituted as "the
+# matched substring", corrupting the file.
+build_live_agents() {
+  local count="$1" synthesis="$2"
+  local c
+  c=$(cat <<'AGENTS'
+Agent Instructions
+Overview
+This repository has been upgraded via agent-enhance --synthesize to a lean, always-on
+contract for AI agents and humans. Durable context is preserved by reference under
+`.agents/references/`; load only what the task requires (progressive disclosure).
+
+LANG_PLACEHOLDER
+MARKER_BEGIN_PLACEHOLDER
+PROTOCOL_PLACEHOLDER
+MARKER_END_PLACEHOLDER
+PROGRESSIVE_PLACEHOLDER
+DOD_PLACEHOLDER
+Synthesis Notes
+
+Every discovered source was classified by tier (Canon / Current / Skills / Historical
+Archive / General Docs / Other) and preserved. None were deleted. The full inventory and
+complete per-source content live under:
+
+- Full discovery inventory + every source (full text): .agents/references/synthesis-inventory.md
+- Elevated-source notes (canon/current/skills): .agents/references/synthesis-elevated.md
+- Decision record: .agents/memory/decisions.md
+- Status: .agents/memory/current-status.md
+- Handoffs: .agents/handoffs/
+- Skills: .agents/skills/
+
+REFERENCE_COUNT_PLACEHOLDER
+Further Reading
+
+Architecture notes: .agents/references/architecture.md (when present)
+Conventions: .agents/references/conventions.md (when present)
+Handoff template: .agents/handoffs/template-handoff.md
+Elevated content
+
+AGENTS
+)
+  c="${c//LANG_PLACEHOLDER/$(printf 'Primary stack (detected): %s.' "$LANG")}"
+  c="${c//MARKER_BEGIN_PLACEHOLDER/$MARKER_BEGIN}"
+  c="${c//PROTOCOL_PLACEHOLDER/$PROTOCOL_BLOCK}"
+  c="${c//MARKER_END_PLACEHOLDER/$MARKER_END}"
+  c="${c//PROGRESSIVE_PLACEHOLDER/$PROGRESSIVE_DISCLOSURE_BLOCK}"
+  c="${c//DOD_PLACEHOLDER/$DEFINITION_OF_DONE_BLOCK}"
+  c="${c//REFERENCE_COUNT_PLACEHOLDER/Reference count: $count source file(s) preserved by reference.}"
+  # Append the elevated synthesis by concatenation (see note above).
+  printf '%s\n\n%s\n' "$c" "$synthesis"
+}
+
 # ============================================================================
-# --synthesize mode: produce a reviewable proposal without touching AGENTS.md
+# --synthesize mode: synthesize-and-apply
 # ============================================================================
 if $SYNTHESIZE; then
   TODAY=$(date +%Y-%m-%d)
-  PROPOSED="AGENTS.md.proposed"
-  HANDOFF="$HANDOFFS_DIR/$TODAY-synthesis-review.md"
+  INVENTORY_FILE="$REFS_DIR/synthesis-inventory.md"
 
   # Broader, git-aware discovery. Gather a de-duplicated candidate list.
   info "Discovering candidate documents (git-aware, bounded)"
   CANDIDATES=()
   while IFS= read -r rel; do
+    rel="${rel#./}"
+    [[ -n "$rel" ]] || continue
     CANDIDATES+=( "$rel" )
   done < <(gather_candidates)
 
   COUNT="${#CANDIDATES[@]}"
   if (( COUNT == 0 )); then
-    info "No candidate documents discovered — nothing to synthesize. Live AGENTS.md untouched."
-    FOUND_ANY=false
+    info "No candidate documents discovered — nothing to synthesize."
   else
-    FOUND_ANY=true
     info "Discovered $COUNT candidate document(s)."
     # Build the discovery inventory (complete list of considered paths + disposition).
     INVENTORY="$(build_inventory)"
     SYNTHESIS="$(build_prioritized_synthesis)"
 
-    # Build the complete reference body: discovery inventory + each source.
-    BODY=$'## Complete Discovery Inventory\n\n'
-    BODY+=$'Every file below was considered during this synthesis. No discovered source is\n'
-    BODY+=$'silently dropped; each has a tier and is either inlined below or referenced by\n'
-    BODY+=$'path. Historical-archive material is referenced (never bulk-inlined).\n\n'
-    BODY+="$INVENTORY"$'\n'
-    BODY+=$'---\n\n'
-    BODY+="$(build_body)"
+    # Complete durable reference body: discovery inventory + every source per its
+    # tier (archives reference-only). No discovered source is dropped.
+    REF_BODY=$'# Agent-Enhance — Synthesis Knowledge Repository\n\n'
+    REF_BODY+=$'Preserves, by reference, every discovered source from the synthesis-and-apply run.\n'
+    REF_BODY+=$'Nothing here was deleted or silently dropped. This durable home provides full\n'
+    REF_BODY+=$'content for knowledge the lean live AGENTS.md intentionally does not inline.\n'
+    REF_BODY+=$'\nGenerated by: agent-enhance v'
+    REF_BODY+="$VERSION"
+    REF_BODY+=$'\nDate: '
+    REF_BODY+="$TODAY"
+    REF_BODY+=$'\nLanguage: '
+    REF_BODY+="${LANG}"
+    REF_BODY+=$'\n\n---\n\n'
+    REF_BODY+=$'## Complete Discovery Inventory\n\n'
+    REF_BODY+=$'Every file below was considered during this synthesis. No discovered source is\n'
+    REF_BODY+=$'silently dropped; each has a tier and is either referenced or inlined in this\n'
+    REF_BODY+=$'repository. Historical-archive material is referenced (never bulk-inlined).\n\n'
+    REF_BODY+="$INVENTORY"
+    REF_BODY+=$'\n\n---\n\n'
+    REF_BODY+=$'## Prioritized Synthesis (elevated Canon / Skills / Current)\n\n'
+    REF_BODY+="$SYNTHESIS"
+    REF_BODY+=$'\n---\n\n'
+    REF_BODY+=$'## Full Preserved Content (per source & tier)\n\n'
+    REF_BODY+="$(build_body)"
 
-    info "Existing alignment/knowledge document(s) found — producing $PROPOSED"
-    TODAY2="$TODAY"
-    LANGX="$LANG"
+    # A short, human/agent-readable note on just the elevated sources.
+    ELEVATED=$'# Agent-Enhance — Elevated Synthesis Notes\n\n'
+    ELEVATED+=$'Summarises the Canon / Skills / Current material that maps into the live\n'
+    ELEVATED+=$'AGENTS.md. Full preserved content, including archives, lives in\n'
+    ELEVATED+=$'synthesis-inventory.md.\n\n'
+    ELEVATED+="$SYNTHESIS"
 
-    # Assemble the proposal by concatenation (no placeholder substitution).
-    # Substituting placeholders with ${var//old/new} would let a literal `&`
-    # inside the variable content (common in inlined sources, e.g. `a && b`)
-    # be treated as "the matched substring", corrupting the output. Concatenation
-    # avoids that entirely.
-    PROPOSED_CONTENT=$'# AGENTS.md — PROPOSAL — DO NOT APPLY UNVERIFIED\n\n'
-    PROPOSED_CONTENT+=$'- Status: PROPOSAL (review required)\n'
-    PROPOSED_CONTENT+=$'- Generated by: agent-enhance v'"$VERSION"$'\n'
-    PROPOSED_CONTENT+=$'- Date: '"$TODAY2"$'\n'
-    PROPOSED_CONTENT+=$'- Primary stack (detected): '"$LANGX"$'\n\n'
-    PROPOSED_CONTENT+=$'This is a proposed replacement for AGENTS.md. The live AGENTS.md has NOT been modified.\n'
-    PROPOSED_CONTENT+=$'Review the content below (and, for large sources, open the referenced paths) and\n'
-    PROPOSED_CONTENT+=$'finalise deliberately. Do not accept this proposal blindly.\n\n'
-    PROPOSED_CONTENT+="$PROTOCOL_BLOCK"
-    PROPOSED_CONTENT+=$'\n\n'
-    PROPOSED_CONTENT+="$PROGRESSIVE_DISCLOSURE_BLOCK"
-    PROPOSED_CONTENT+=$'\n\n'
-    PROPOSED_CONTENT+="$DEFINITION_OF_DONE_BLOCK"
-    PROPOSED_CONTENT+=$'\n## Source Classification\n\n'
-    PROPOSED_CONTENT+=$'Discovered documents are classified into deterministic tiers so that durable,\n'
-    PROPOSED_CONTENT+=$'high-signal material is elevated while historical exhaust stays available under\n'
-    PROPOSED_CONTENT+=$'progressive disclosure. The tiers and their treatment:\n\n'
-    PROPOSED_CONTENT+=$'- **Canon** (long-lived identity, laws, architecture, toolchain) — high priority; preferred for extraction / inline.\n'
-    PROPOSED_CONTENT+=$'- **Current / Active** (latest status, active handoff, volley) — high priority; surfaced prominently.\n'
-    PROPOSED_CONTENT+=$'- **Skills** (reusable agent workflows) — high priority; listed and surfaced.\n'
-    PROPOSED_CONTENT+=$'- **Historical Archive** (session logs, volley archives, old handoffs) — inventoried and referenced; never bulk-inlined.\n'
-    PROPOSED_CONTENT+=$'- **General Docs** (broader docs, references) — inventoried; inlined only if small and high-signal.\n'
-    PROPOSED_CONTENT+=$'- **Other** — inventoried; referenced or minimal excerpt.\n\n'
-    PROPOSED_CONTENT+=$'The Prioritized Synthesis section below elevates only the Canon / Skills /\n'
-    PROPOSED_CONTENT+=$'Current tiers as the recommended core. Everything else remains fully inventoried\n'
-    PROPOSED_CONTENT+=$'and referenced in the Complete Discovery Inventory.\n\n'
-    PROPOSED_CONTENT+=$'---\n\n'
-    PROPOSED_CONTENT+="$SYNTHESIS"
-    PROPOSED_CONTENT+=$'\n## Further Reading\n\n'
-    PROPOSED_CONTENT+=$'- Handoff template: .agents/handoffs/template-handoff.md\n'
-    PROPOSED_CONTENT+=$'- Architecture notes: .agents/references/architecture.md (when present)\n'
-    PROPOSED_CONTENT+=$'- Conventions: .agents/references/conventions.md (when present)\n'
-    PROPOSED_CONTENT+=$'\n---\n\n'
-    PROPOSED_CONTENT+="$BODY"
-    PROPOSED_CONTENT+=$'\n## Review & Finalisation\n\n'
-    PROPOSED_CONTENT+=$'1. Open each referenced (non-inlined) source listed in the Discovery Inventory.\n'
-    PROPOSED_CONTENT+=$'2. Confirm the mandatory protocols coexist with the discovered material without loss\n'
-    PROPOSED_CONTENT+=$'   or contradiction.\n'
-    PROPOSED_CONTENT+=$'3. Decide what to retain, then edit conflicts or additions as needed.\n'
-    PROPOSED_CONTENT+=$'4. When satisfied, rename this file to AGENTS.md (or merge its contents) and delete the\n'
-    PROPOSED_CONTENT+=$'   PROPOSAL header.\n'
-    PROPOSED_CONTENT+=$'5. Record the decision in .agents/memory/decisions.md.\n'
-    write_proposed_file "$PROPOSED" "$PROPOSED_CONTENT"
+    # --- 2. Compose the lean, always-on live AGENTS.md (protocols + elevated synthesis) ---
+    LEAN_AGENTS="$(build_live_agents "$COUNT" "$SYNTHESIS")"
 
-    HANDOFF_CONTENT=$(cat <<'HOF'
-Handoff — synthesis review — <TODAYX_PLACEHOLDER>
+    info "Building lean AGENTS.md and durable knowledge repository under $REFS_DIR/"
+
+    # --- 3. Write (dry-run safe) all outputs ---
+    write_file "$INVENTORY_FILE" "$REF_BODY"
+    write_file "$REFS_DIR/synthesis-elevated.md" "$ELEVATED"
+    write_file "AGENTS.md" "$LEAN_AGENTS"
+
+    # --- 4. Decision entry (append; idempotent) ---
+    if $DRY_RUN; then
+      info "[dry-run] would append decision entry to $MEMORY_DIR/decisions.md"
+    elif [[ ! -f "$MEMORY_DIR/decisions.md" ]] || ! grep -qF "Synthesis-and-apply (v$VERSION)" "$MEMORY_DIR/decisions.md"; then
+      { printf '\n### %s — Synthesis-and-apply (v%s)\n\n- **Decision**: Upgraded AGENTS.md via agent-enhance --synthesize to a lean, protocol-compliant version.\n' "$TODAY" "$VERSION"
+        printf '%s\n' "- **Rationale**: Keep the always-on contract lean while preserving all discovered knowledge under progressive disclosure."
+        printf '%s\n' "- **Elevated**: Canon / Skills / Current tiers were surfaced in the live AGENTS.md."
+        printf '%s\n' "- **Preserved**: Complete inventory + every source under $REFS_DIR/ (see synthesis-inventory.md)."
+        printf '%s\n' "- **Consequences / follow-ups**: Historical-archive and lower-tier content are reference-only; review before editing."
+        printf '%s\n' "- **Related files / PRs**: AGENTS.md, .agents/references/synthesis-inventory.md, .agents/references/synthesis-elevated.md"
+        printf '%s\n' "- **Recorded by**: agent-enhance v$VERSION"
+      } >> "$MEMORY_DIR/decisions.md"
+      info "appended decision entry: $MEMORY_DIR/decisions.md"
+    else
+      info "decision entry already recorded (left untouched): $MEMORY_DIR/decisions.md"
+    fi
+
+    # --- 5. Handoff ---
+    HANDOFF_CONTENT=$(cat <<HOF
+Handoff — synthesis apply — $TODAY
 Goal
-Review and finalise the proposed AGENTS.md produced by agent-enhance --synthesize.
+Review the synthesized live AGENTS.md and the durable knowledge repository produced by agent-enhance --synthesize.
 Current State
 
 Completed:
-
-Proposal written to AGENTS.md.proposed (the live AGENTS.md was not modified).
-Candidate documents were discovered (git-aware), and each was either inlined in full
-or referenced by path. A complete Discovery Inventory is at the top of the proposal.
+- Live AGENTS.md rewritten to the lean, protocol-compliant version.
+- Every discovered source preserved: ".agents/references/synthesis-inventory.md" holds the full inventory and all preserved content.
+- Elevated (Canon / Skills / Current) notes in ".agents/references/synthesis-elevated.md".
+- Decision recorded in .agents/memory/decisions.md.
 
 In progress:
 
-Human/agent review of the proposal.
+Human/agent review of the applied changes.
 
 Blocked / open questions:
 
 None known.
 
-
 Key Decisions Made
-The enhancement was recorded in .agents/memory/decisions.md.
-The chosen strategy is conservative: synthesize a proposal first, then apply after review.
+- Synthesis-and-apply: AGENTS.md now reflects the elevated material; historical content is preserved by reference.
+- No discovered source was deleted.
 Files / Areas Touched
 
-AGENTS.md.proposed (new — requires review)
+AGENTS.md (rewritten lean)
+.agents/references/synthesis-inventory.md (new)
+.agents/references/synthesis-elevated.md (new)
+.agents/memory/decisions.md (appended)
 
 Exact Next Actions for the Receiving Session
 
-1. Open AGENTS.md.proposed and read the Discovery Inventory for the full set of sources.
-2. For each referenced (non-inlined) source, open the path and review it in full.
-3. Confirm nothing was lost or contradicted by the mandatory protocols.
-4. Decide what to retain, adjust the proposal as needed.
-5. When satisfied, rename AGENTS.md.proposed to AGENTS.md and remove the PROPOSAL header.
-6. Record the finalisation decision in .agents/memory/decisions.md.
+1. Read AGENTS.md and the Session Start protocol.
+2. Review .agents/references/synthesis-inventory.md for the full preserved set.
+3. Confirm nothing important was lost; adjust the lean AGENTS.md if needed.
+4. Keep .agents/memory/current-status.md and decisions.md current.
 
 Context the New Agent Must Load
 
 Always: .agents/memory/current-status.md and recent .agents/memory/decisions.md
 Relevant skills: (list if any)
-Relevant references: (list if any)
+Relevant references: .agents/references/synthesis-inventory.md (full preserved content)
 Role charter (if multi-agent): (path)
 
 Additional Notes
-This review step exists to protect existing knowledge. Do not apply the proposal until a
-human or reviewing agent has confirmed it is conflict-free and complete.
+The repository now advances to the mission-critical structure: a lean always-on AGENTS.md, with full knowledge preserved under progressive disclosure.
 HOF
 )
-    HANDOFF_CONTENT="${HANDOFF_CONTENT//TODAYX_PLACEHOLDER/$TODAY}"
-    write_proposed_file "$HANDOFF" "$HANDOFF_CONTENT"
+    write_file "$HANDOFFS_DIR/$TODAY-synthesis-apply.md" "$HANDOFF_CONTENT"
   fi
 
   echo
-  info "Enhancement complete (synthesize mode)."
+  info "Enhancement complete (synthesize-and-apply mode)."
   if $DRY_RUN; then
-    info "This was a dry-run. Re-run without --dry-run to produce the proposal."
+    info "This was a dry-run. Re-run without --dry-run to apply the synthesis to the live AGENTS.md."
   else
-    info "The live AGENTS.md was NOT modified."
-    if $FOUND_ANY; then
-      info "Review $PROPOSED and the handoff at $HANDOFF, then finalise."
-    fi
+    info "The live AGENTS.md was rewritten lean; all discovered knowledge is preserved under $REFS_DIR/."
   fi
   exit 0
 fi

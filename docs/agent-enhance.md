@@ -45,7 +45,7 @@ Run inside a repository, or pass a target directory. `TARGET_DIR` defaults to `.
 | Option | Description |
 | --- | --- |
 | `-n, --dry-run` | Show what would be done without writing files
-| `--synthesize` | Produce `AGENTS.md.proposed` + review handoff instead of modifying `AGENTS.md` |
+| `--synthesize` | Synthesize-and-apply: rewrite the live `AGENTS.md` lean, elevating **Canon / Skills / Current** material, and preserve **all** discovered sources under `.agents/references/` |
 | `--force-protocols` | Note that markers already exist (conservative)
 | `--allow-dirty` | Permit operation on a dirty Git working tree (default is to refuse)
 | `--multi-agent` | Include role charters (coordinator, implementer, reviewer)
@@ -69,15 +69,36 @@ agent-enhance --multi-agent --sample-skill .
 agent-enhance /path/to/other/repo
 ```
 
-## --synthesize: retrofit with a reviewable proposal
+## --synthesize: synthesize-and-apply (v0.5.0)
 
-`--synthesize` does **not** touch the live `AGENTS.md`. Instead it performs a **broader,
-safe, bounded** discovery of candidate documents and produces `AGENTS.md.proposed` — a
-reviewable proposal combining the mandatory protocols with the discovered material — and
-writes a review handoff under `.agents/handoffs/YYYY-MM-DD-synthesis-review.md`.
+`--synthesize` performs a **broader, safe, bounded** discovery of candidate documents,
+classifies each into a deterministic **tier**, then **upgrades the live `AGENTS.md`** to a
+lean, protocol-compliant version — while **preserving every discovered source** under
+progressive disclosure. Nothing is deleted and nothing discovered is dropped.
 
-### Discovery behaviour (v0.3.0)
+Run `--synthesize --dry-run` first to preview every intended write (it writes nothing).
 
+### What it writes
+
+1. **Live `AGENTS.md`** — replaced with a lean, always-on contract:
+   - Mandatory Session Start + Handoff protocols (unchanged wording, wrapped in the
+     `AGENT-ENHANCE:BEGIN/END` markers).
+   - Progressive disclosure + Definition of Done.
+   - **Elevated content** from the **Canon / Skills / Current / Active** tiers (synthesised,
+     never a bulk historical dump).
+   - Pointers to the durable knowledge under `.agents/`.
+2. **`.agents/references/synthesis-inventory.md`** — the durable knowledge repository: the
+   complete Discovery Inventory (every path + tier + disposition) plus the full preserved
+   content of every source per its tier. Historical archives are referenced (path + short
+   excerpt), never bulk-inlined.
+3. **`.agents/references/synthesis-elevated.md`** — a focused note on the elevated
+   Canon / Skills / Current material mapped into the live `AGENTS.md`.
+4. **`.agents/memory/decisions.md`** — a synthesis-and-apply decision entry is appended
+   (idempotent: re-running does not duplicate it).
+5. **`.agents/handoffs/YYYY-MM-DD-synthesis-apply.md`** — a handoff describing the change
+   and next review steps.
+
+### Discovery behaviour
 
 - **Git-aware**: inside a git repository, discovery uses `git ls-files`; otherwise it
   falls back to `find`. Both paths de-duplicate and sort the candidate set.
@@ -94,27 +115,23 @@ writes a review handoff under `.agents/handoffs/YYYY-MM-DD-synthesis-review.md`.
 - **Hard exclusions**: `.git/`, `node_modules/`, `vendor/`, `dist/`, `build/`,
   `__pycache__/`, `.venv/`, plus lockfiles, binaries, and minified assets.
 - **Size discipline**: files smaller than 32 KiB are inlined in full; larger files are
-  recorded by path with size and a short excerpt, with an explicit “full content
-  available at path” reference. Nothing discovered is silently dropped.
-- **Complete inventory**: the proposal opens with a Discovery Inventory listing every
-  candidate path and its disposition (inlined or referenced), so a reviewer sees the
-  full set of sources considered.
+  recorded by path with size and a short excerpt (valid-UTF-8), with an explicit “full
+  content available at path” reference. Nothing discovered is silently dropped.
 
-### Source classification (v0.4.0)
+### Source classification (v0.4.0, reused)
 
 Every discovered document is assigned a deterministic **tier** from its path/name, so
-durable, high-signal material is elevated while historical exhaust stays available under
-progressive disclosure. Nothing is silently dropped — the complete inventory lists every
-candidate **with its tier**.
+long-lived, high-signal material is elevated while historical exhaust stays available under
+progressive disclosure. The complete inventory lists every candidate **with its tier**.
 
-| Tier | Intent | Treatment in proposal |
+| Tier | Intent | Treatment |
 | --- | --- | --- |
-| **Canon** | Long-lived identity, immutable laws, architecture, toolchain, core constraints | High priority. Preferred for extraction / full inline when small. Strongly candidate for the final `AGENTS.md`. |
-| **Current / Active** | Latest handoff, current status, active memory/decision log | High priority. Surfaced prominently. |
-| **Skills** | Reusable agent skills (`SKILL.md` etc.) | High priority. Listed and surfaced. |
-| **Historical Archive** | Session logs, volley archives, old handoffs, past-session memory | Inventory + reference only (path + short excerpt). Never bulk-inlined. |
-| **General Docs** | Broader documentation, API references, tutorials | Inventory + selective reference. Inline only if small and clearly high-signal. |
-| **Other** | Everything else that matched discovery | Inventory; reference or minimal excerpt. |
+| **Canon** | Long-lived identity, laws, architecture, toolchain, core constraints | Elevated into the live `AGENTS.md`. |
+| **Current / Active** | Latest handoff, current status, active memory/decision log | Elevated into the live `AGENTS.md`. |
+| **Skills** | Reusable agent skills (`SKILL.md` etc.) | Listed and surfaced; elevated when small. |
+| **Historical Archive** | Session logs, volley archives, old handoffs, past-session memory | Preserved by reference (path + short excerpt). Never bulk-inlined. |
+| **General Docs** | Broader documentation, API references, tutorials | Preserved in the inventory; inline only if small and high-signal. |
+| **Other** | Everything else that matched discovery | Preserved in the inventory; referenced or minimal excerpt. |
 
 Classification is path/name-driven and deterministic: `.agents/canon/`, `identity`,
 `system-map`, `toolchain`, etc. classify as **Canon**; `current-status.md`,
@@ -123,39 +140,23 @@ handoffs classify as **Current**; `**/skills/` and `SKILL.md` classify as **Skil
 `**/volley/archive/**`, archived/dated handoffs, and past-session memory classify as
 **Historical Archive**. Other matched docs fall into **General Docs** or **Other**.
 
-### Proposal structure (v0.4.0)
+### Safety behaviour
 
-`AGENTS.md.proposed` is organized to stay reviewable on repositories with large history:
-
-1. **PROPOSAL header** — version, date, and an explicit “do not accept blindly” note.
-2. **Session Start + Handoff protocols** (mandatory, unchanged wording).
-3. **Progressive disclosure + Definition of Done**.
-4. **Prioritized Synthesis** — extracted/referenced material from **Canon + Skills +
-   Current/Active** tiers only (the recommended core). Historical-archive and
-   low-signal material is intentionally not dumped here.
-5. **Source Classification** table (above) documenting how each tier is treated.
-6. **Complete Discovery Inventory** — every candidate still listed with its tier and
-   disposition (inlined / referenced / archive-referenced).
-7. **Reference body** — each source per its tier; archives remain reference-only.
-8. **Further Reading / next actions** for the reviewer.
-
-### Size & context discipline (v0.4.0)
-
-- The existing 32 KiB inline threshold is retained for Canon / Current / Skills / Docs.
-- **Historical Archive material is never bulk-inlined**, regardless of individual file
-  size — it is inventoried and referenced (path + short excerpt only).
-- The goal is a reviewable proposal, not a dump of repository history.
+- `--dry-run` reports every intended write (live `AGENTS.md`, inventory, elevated notes,
+  decision, handoff) and writes nothing.
+- The live `AGENTS.md` rewrite is intentional and visible; use `--dry-run` to preview.
+- Git working-tree handling is unchanged: a dirty tree is refused by default; use
+  `--allow-dirty` to override.
+- Never present only a giant intermediate file: the repository actually advances.
+- Git state is never modified (no auto-commit).
 
 ```bash
-# Produce the proposal without modifying anything
-agent-enhance --synthesize
-
-# Preview the same output without writing files
+# Preview every intended write (writes nothing)
 agent-enhance --synthesize --dry-run
-```
 
-This is the conservative path for protecting existing knowledge: a human or reviewing
-agent inspects and finalises the proposal before it becomes `AGENTS.md`.
+# Apply: rewrite the live AGENTS.md lean and preserve all discovered knowledge
+agent-enhance --synthesize
+```
 
 ## Git working-tree safety check
 
@@ -186,7 +187,12 @@ nothing is staged, committed, or stashed.
 - Optional (`--multi-agent`): `.agents/agents/{coordinator,implementer,reviewer}.md`
 - Optional (`--sample-skill`): `.agents/skills/example-skill/SKILL.md`
 
-Nothing existing is overwritten. Re-running is safe.
+In `--synthesize` mode the files written change: the live `AGENTS.md` is **replaced** by
+the lean synthesized version, and the durable knowledge repository is written under
+`.agents/references/` (see the synthesize-and-apply section above). Existing discovered
+source files are never deleted or overwritten in place.
+
+Nothing else existing is overwritten. Re-running is safe.
 
 ## Next steps
 

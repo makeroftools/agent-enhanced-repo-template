@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke-test for the `agent-enhance` v0.4.0 script.
+# Smoke-test for the `agent-enhance` v0.5.0 script.
 #
 # Usage: bash tests/agent-enhance_check.sh <path-to-bin/agent-enhance>
 #
@@ -8,11 +8,11 @@
 #   - --version / --help
 #   - default mode creates the full structure and a correct AGENTS.md
 #   - existing AGENTS.md is preserved and protocols injected with markers
-#   - --synthesize produces AGENTS.md.proposed + handoff and never touches live AGENTS.md
-#   - --synthesize discovers broader documents and respects size/exclusion rules
-#   - --synthesize classifies sources into tiers and elevates canon/current/skills
-#   - historical-archive material is referenced, not bulk-inlined
-#   - --dry-run writes nothing
+#   - --synthesize performs synthesize-and-apply: rewrites the live AGENTS.md
+#     lean AND preserves every discovered source under .agents/references/
+#   - --dry-run writes nothing and reports intent
+#   - historical/lib material is referenced, not bulk-inlined
+#   - dirty Git tree refused by default; --allow-dirty works
 #   - re-runs are idempotent
 set -euo pipefail
 
@@ -30,8 +30,8 @@ bash -n "$SCRIPT" || fail "bash -n failed"
 pass "syntactically valid"
 
 # --- 2. version / help ---
-[[ "$("$SCRIPT" --version)" == "agent-enhance 0.4.0" ]] || fail "--version"
-pass "--version reports 0.4.0"
+[[ "$("$SCRIPT" --version)" == "agent-enhance 0.5.0" ]] || fail "--version"
+pass "--version reports 0.5.0"
 "$SCRIPT" --help >/dev/null 2>&1 || fail "--help"
 pass "--help exits 0"
 
@@ -88,23 +88,24 @@ pass "non-git dir -> proceeds"
 "$SCRIPT" --dry-run "$GD" >/dev/null 2>&1 && fail "dry-run dirty should refuse"
 pass "dry-run on dirty reflects refusal"
 
-# --- 5. synthesize: proposal + handoff, live AGENTS untouched ---
+# --- 5. synthesize: synthesize-and-apply updates live AGENTS.md lean + preserves all ---
 SYN="$BASE/syn"; mkdir -p "$SYN"
 printf 'OLD AGENT\n' > "$SYN/AGENT.md"
 printf 'OLD CLAUDE\n' > "$SYN/CLAUDE.md"
 printf 'CURSOR RULES\n' > "$SYN/.cursorrules"
 "$SCRIPT" --synthesize "$SYN" >/dev/null 2>&1 || fail "synthesize run"
-[ -f "$SYN/AGENTS.md.proposed" ] || fail "AGENTS.md.proposed missing"
-ls "$SYN"/.agents/handoffs/*synthesis-review.md >/dev/null 2>&1 || fail "synthesis handoff missing"
-[ ! -f "$SYN/AGENTS.md" ] || fail "live AGENTS.md was created"
-grep -q "Session Start Protocol (Mandatory)" "$SYN/AGENTS.md.proposed" || fail "proposal missing protocols"
-grep -q "AGENT.md" "$SYN/AGENTS.md.proposed" || fail "proposal missing AGENT.md"
-grep -q "CLAUDE.md" "$SYN/AGENTS.md.proposed" || fail "proposal missing CLAUDE.md"
-grep -q ".cursorrules" "$SYN/AGENTS.md.proposed" || fail "proposal missing .cursorrules"
-grep -q "Discovery Inventory" "$SYN/AGENTS.md.proposed" || fail "proposal missing Discovery Inventory"
-pass "synthesize produced proposal + handoff, live AGENTS untouched"
+[ -f "$SYN/AGENTS.md" ] || fail "synthesize did not create live AGENTS.md"
+grep -q "Session Start Protocol (Mandatory)" "$SYN/AGENTS.md" || fail "live AGENTS.md missing protocols"
+grep -q "synthesis-inventory.md" "$SYN/AGENTS.md" || fail "live AGENTS.md missing pointer to inventory"
+[ -f "$SYN/.agents/references/synthesis-inventory.md" ] || fail "missing synthesis-inventory.md"
+grep -q "AGENT.md" "$SYN/.agents/references/synthesis-inventory.md" || fail "inventory missing AGENT.md"
+grep -q "CLAUDE.md" "$SYN/.agents/references/synthesis-inventory.md" || fail "inventory missing CLAUDE.md"
+grep -q ".cursorrules" "$SYN/.agents/references/synthesis-inventory.md" || fail "inventory missing .cursorrules"
+ls "$SYN"/.agents/handoffs/*synthesis-apply.md >/dev/null 2>&1 || fail "synthesis handoff missing"
+grep -q "Synthesis-and-apply" "$SYN/.agents/memory/decisions.md" || fail "decision entry missing"
+pass "synthesize-and-apply: live AGENTS lean + full inventory + handoff + decision"
 
-# --- 5b. broader discovery, size discipline, hard exclusions ---
+# --- 5b. broader discovery, size discipline, hard exclusions (synthesize applies) ---
 BROAD="$BASE/broad"; mkdir -p "$BROAD/docs" "$BROAD/adr" "$BROAD/policies" "$BROAD/.github" "$BROAD/node_modules"
 printf '# Playbook\nP body.\n' > "$BROAD/docs/playbook.md"
 printf '# ADR\nChose Postgres.\n' > "$BROAD/adr/0001-db.md"
@@ -114,28 +115,35 @@ printf 'ignored\n' > "$BROAD/node_modules/ignored.md"
 awk 'BEGIN{print "# big"; for(i=0;i<40000;i++) print "x"}' > "$BROAD/docs/big.md"
 printf 'int main(){return 0;}\n' > "$BROAD/main.c"
 "$SCRIPT" --synthesize "$BROAD" >/dev/null 2>&1 || fail "broad synthesize run"
-grep -q "docs/playbook.md" "$BROAD/AGENTS.md.proposed" || fail "missing docs/playbook.md"
-grep -q "adr/0001-db.md" "$BROAD/AGENTS.md.proposed" || fail "missing adr/0001-db.md"
-grep -q "policies/retention-policy.md" "$BROAD/AGENTS.md.proposed" || fail "missing policies file"
-grep -q "copilot-instructions.md" "$BROAD/AGENTS.md.proposed" || fail "missing .github copilot file"
-grep -q "docs/big.md.*referenced" "$BROAD/AGENTS.md.proposed" || fail "large file not referenced"
-grep -q "ignored.md" "$BROAD/AGENTS.md.proposed" && fail "node_modules content leaked into proposal"
-grep -q "main.c" "$BROAD/AGENTS.md.proposed" && fail "source file wrongly treated as candidate"
-pass "broader discovery + size/exclusion rules correct"
+grep -q "docs/playbook.md" "$BROAD/.agents/references/synthesis-inventory.md" || fail "missing docs/playbook.md"
+grep -q "adr/0001-db.md" "$BROAD/.agents/references/synthesis-inventory.md" || fail "missing adr/0001-db.md"
+grep -q "policies/retention-policy.md" "$BROAD/.agents/references/synthesis-inventory.md" || fail "missing policies file"
+grep -q "copilot-instructions.md" "$BROAD/.agents/references/synthesis-inventory.md" || fail "missing .github copilot file"
+grep -q "docs/big.md.*referenced" "$BROAD/.agents/references/synthesis-inventory.md" || fail "large file not referenced"
+grep -q "ignored.md" "$BROAD/.agents/references/synthesis-inventory.md" && fail "node_modules content leaked into inventory"
+grep -q "main.c" "$BROAD/.agents/references/synthesis-inventory.md" && fail "source file wrongly treated as candidate"
+# The live AGENTS.md must stay lean: source content should NOT be bulk-inlined.
+grep -q "int main" "$BROAD/AGENTS.md" && fail "live AGENTS.md bulk-inlined source content"
+pass "broader discovery + size/exclusion rules correct (apply path)"
 
 # --- 6. dry-run writes nothing ---
 DRY="$BASE/dry"; mkdir -p "$DRY"
 printf 'AGENT\n' > "$DRY/AGENT.md"
-"$SCRIPT" --dry-run "$DRY" >/dev/null 2>&1 || fail "dry-run run"
-[ ! -f "$DRY/AGENTS.md.proposed" ] || fail "dry-run wrote AGENTS.md.proposed"
-[ -z "$(find "$DRY/.agents" -type f 2>/dev/null)" ] || fail "dry-run wrote .agents files"
-pass "dry-run wrote nothing"
+printf 'OLD\n' > "$DRY/AGENTS.md"
+"$SCRIPT" --synthesize --dry-run "$DRY" >/dev/null 2>&1 || fail "synthesize dry-run run"
+[ "$(cat "$DRY/AGENTS.md")" == "OLD" ] || fail "dry-run modified live AGENTS.md"
+[ ! -f "$DRY/.agents/references/synthesis-inventory.md" ] || fail "dry-run wrote synthesis-inventory.md"
+[ ! -f "$DRY/.agents/references/synthesis-elevated.md" ] || fail "dry-run wrote synthesis-elevated.md"
+[ ! -e "$DRY/.agents" ] || [ -z "$(find "$DRY/.agents" -type f 2>/dev/null)" ] || fail "dry-run wrote .agents files"
+pass "synthesize --dry-run wrote nothing, live AGENTS untouched"
 
-# --- 7. idempotency: second run of synthesize does not duplicate ---
+# --- 7. idempotency: second synthesize run does not duplicate / regress ---
 "$SCRIPT" --synthesize "$SYN" >/dev/null 2>&1 || fail "synthesize re-run"
-[ "$(ls "$SYN"/.agents/handoffs/*synthesis-review.md | wc -l)" -eq 1 ] || fail "handoff duplicated"
-[ -f "$SYN/AGENTS.md.proposed" ] && [ ! -f "$SYN/AGENTS.md" ] || fail "idempotency structure broken"
-pass "re-run is idempotent (single handoff, live AGENTS still untouched)"
+[ "$(ls "$SYN"/.agents/handoffs/*synthesis-apply.md | wc -l)" -eq 1 ] || fail "synthesis handoff duplicated"
+[ ! -f "$SYN/AGENTS.md.proposed" ] || fail "legacy proposed intermediate not removed from $SYN"
+grep -q "Session Start Protocol (Mandatory)" "$SYN/AGENTS.md" || fail "re-run dropped live protocols"
+grep -q "AGENT.md" "$SYN/.agents/references/synthesis-inventory.md" || fail "re-run lost inventory entry"
+pass "re-run is idempotent (single handoff, lean live AGENTS retained)"
 
 
 # --- 8. tier classification: canon/current/skills elevated, archive referenced ---
@@ -146,20 +154,20 @@ printf '# Status\ncurrent\n' > "$TIER/.agents/memory/current-status.md"
 printf '# Skill\nsync\n' > "$TIER/.agents/skills/wf/SKILL.md"
 printf '# Old session\nhistorical exhaust\n' > "$TIER/.agents/volley/archive/volley_session1.md"
 "$SCRIPT" --synthesize "$TIER" >/dev/null 2>&1 || fail "tier synthesize run"
-grep -q "## Prioritized Synthesis" "$TIER/AGENTS.md.proposed" || fail "proposal missing Prioritized Synthesis"
-grep -q "Canon identity" "$TIER/AGENTS.md.proposed" && grep -q "## Prioritized Synthesis" "$TIER/AGENTS.md.proposed" || fail "canon material not surfaced in proposal"
-# canon + current content appear (elevated); the archive file is NOT inlined verbatim.
-grep -q "Durable laws" "$TIER/AGENTS.md.proposed" || fail "canon/current content absent"
-# Archive must be reference-only: marked 'archived — referenced', NOT inlined in a code fence.
-grep -q "archived — referenced" "$TIER/AGENTS.md.proposed" || fail "archive not marked reference-only"
-if grep -q '```markdown.*volley_session1' "$TIER/AGENTS.md.proposed"; then
-  fail "archive content was bulk-inlined (must be reference-only)"
+grep -q "## Full Preserved Content" "$TIER/.agents/references/synthesis-inventory.md" || fail "reference repository missing preserved section"
+# The durable inventory holds the source and its archive disposition; never a bulk dump in AGENTS.md.
+grep -q "volley_session1.md" "$TIER/.agents/references/synthesis-inventory.md" || fail "archive path missing from inventory"
+grep -q "tier: archive" "$TIER/.agents/references/synthesis-inventory.md" || fail "archive tier not labelled in inventory"
+grep -q "tier: canon" "$TIER/.agents/references/synthesis-inventory.md" || fail "canon tier not labelled in inventory"
+# The archive source file must remain on disk (never deleted), and its content must NOT be
+# bulk-inlined into the live AGENTS.md.
+[ -f "$TIER/.agents/volley/archive/volley_session1.md" ] || fail "archive source file was deleted"
+if grep -q '```markdown.*volley_session1' "$TIER/AGENTS.md"; then
+  fail "archive content was bulk-inlined into live AGENTS.md (must be reference-only)"
 fi
-grep -q "volley/archive/volley_session1.md" "$TIER/AGENTS.md.proposed" || fail "archive path missing from inventory"
-grep -q "tier: archive" "$TIER/AGENTS.md.proposed" || fail "archive tier not labelled in inventory"
-grep -q "tier: canon" "$TIER/AGENTS.md.proposed" || fail "canon tier not labelled in inventory"
-grep -q "## Complete Discovery Inventory" "$TIER/AGENTS.md.proposed" || fail "missing complete inventory"
-pass "tier classification: canon/current/skills elevated, archive referenced"
+# Elevated canon content IS surfaced in the live (lean) AGENTS.md.
+grep -q "Durable laws" "$TIER/AGENTS.md" || fail "canon content absent from live AGENTS.md"
+pass "tier classification: canon elevated into live, archive preserved by reference (not deleted)"
 
 echo
-echo "PASS: agent-enhance v0.4.0 behavioural checks verified."
+echo "PASS: agent-enhance v0.5.0 behavioural checks verified."

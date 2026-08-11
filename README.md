@@ -91,17 +91,19 @@ agent-enhance .
 # Apply the core structure and protocols, plus optional components
 agent-enhance --multi-agent --sample-skill .
 
-# If existing alignment files (AGENT.md, .cursorrules, etc.) are present,
-# synthesize a reviewable AGENTS.md.proposed without touching the live file
+# If existing alignment files (AGENT.md, .cursorrules, canon, skills, etc.) are
+# present, synthesize-and-apply: rewrite the live AGENTS.md lean and preserve every
+# discovered source under .agents/references/. Preview with --dry-run first.
 agent-enhance --synthesize .
 ```
 
 It writes `.agents/memory/`, `.agents/handoffs/`, and `.agents/references/`, creates
 `AGENTS.md` (or injects the mandatory protocols between `AGENT-ENHANCE` markers if it
-already exists), and adds a thin `CLAUDE.md` bridge. In `--synthesize` mode it instead
-produces `AGENTS.md.proposed` (embedding every discovered alignment file verbatim) plus a
-review handoff, and never modifies the live `AGENTS.md`. See
-[`docs/agent-enhance.md`](docs/agent-enhance.md) for the full reference.
+already exists), and adds a thin `CLAUDE.md` bridge. In `--synthesize` mode it upgrades
+the live `AGENTS.md` -- rewriting it lean and protocol-compliant, elevating Canon / Skills /
+Current material -- and preserves every discovered source (complete inventory + full
+content) under `.agents/references/synthesis-inventory.md`. Nothing discovered is deleted.
+See [`docs/agent-enhance.md`](docs/agent-enhance.md) for the full reference.
 
 ---
 
