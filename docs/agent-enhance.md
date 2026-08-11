@@ -42,11 +42,12 @@ Run inside a repository, or pass a target directory. `TARGET_DIR` defaults to `.
 
 | Option | Description |
 | --- | --- |
-| `-n, --dry-run` | Show what would be done without writing files |
-| `--force-protocols` | Note that markers already exist (conservative) |
-| `--multi-agent` | Include role charters (coordinator, implementer, reviewer) |
-| `--sample-skill` | Include a sample Skill under `.agents/skills/` |
-| `-h, --help` | Show help |
+| `-n, --dry-run` | Show what would be done without writing files
+| `--synthesize` | Produce `AGENTS.md.proposed` + review handoff instead of modifying `AGENTS.md` |
+| `--force-protocols` | Note that markers already exist (conservative)
+| `--multi-agent` | Include role charters (coordinator, implementer, reviewer)
+| `--sample-skill` | Include a sample Skill under `.agents/skills/`
+| `-h, --help` | Show help
 | `--version` | Show version |
 
 ### Examples
@@ -64,6 +65,26 @@ agent-enhance --multi-agent --sample-skill .
 # Operate on a different repository
 agent-enhance /path/to/other/repo
 ```
+
+## --synthesize: retrofit with a reviewable proposal
+
+When a repository already has alignment documents (`AGENTS.md`, `AGENT.md`, `CLAUDE.md`,
+`.cursorrules`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`,
+`GEMINI.md`), `--synthesize` does **not** touch the live `AGENTS.md`. Instead it produces
+`AGENTS.md.proposed` — a reviewable proposal combining the mandatory protocols with the
+full, unaltered content of every discovered alignment file — and writes a review handoff
+under `.agents/handoffs/YYYY-MM-DD-synthesis-review.md`.
+
+```bash
+# Produce the proposal without modifying anything
+agent-enhance --synthesize
+
+# Preview the same output without writing files
+agent-enhance --synthesize --dry-run
+```
+
+This is the conservative path for protecting existing knowledge: a human or reviewing
+agent inspects and finalises the proposal before it becomes `AGENTS.md`.
 
 ## What it writes
 

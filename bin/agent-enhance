@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # agent-enhance — Add AI-agent-native structure and protocols to an existing repository
 # Mission-critical: additive, idempotent, non-destructive, auditable
-# Version: 0.1.1
+# Version: 0.2.0
 # Source: https://github.com/makeroftools/agent-enhanced-repo-template
 
 set -euo pipefail
 
-VERSION="0.1.1"
+VERSION="0.2.0"
 
 DRY_RUN=false
+SYNTHESIZE=false
 FORCE_PROTOCOLS=false
 INCLUDE_MULTI_AGENT=false
 INCLUDE_SAMPLE_SKILL=false
@@ -56,6 +57,18 @@ write_file() {
   info "wrote: $path"
 }
 
+write_proposed_file() {
+  local path="$1"
+  local content="$2"
+  if $DRY_RUN; then
+    info "[dry-run] would write: $path"
+    return 0
+  fi
+  mkdir -p "$(dirname "$path")"
+  printf '%s\n' "$content" > "$path"
+  info "wrote: $path"
+}
+
 append_if_missing() {
   local path="$1"
   local block="$2"
@@ -76,14 +89,16 @@ append_if_missing() {
 
 usage() {
   cat <<'USAGE'
-agent-enhance v0.1.1
+agent-enhance v0.2.0
 Add AI-agent-native structure and mandatory protocols to an existing repository.
 
 Usage: agent-enhance [OPTIONS] [TARGET_DIR]
 
 Options:
   -n, --dry-run              Show what would be done without writing files
-  --force-protocols          Note that markers already exist (conservative)
+  --synthesize               Produce AGENTS.md.proposed + review handoff instead of
+                             modifying AGENTS.md; existing alignment files are preserved
+                             and embedded. The live AGENTS.md is never overwritten.
   --multi-agent              Include role charters (coordinator, implementer, reviewer)
   --sample-skill             Include a sample Skill under .agents/skills/
   -h, --help                 Show this help
@@ -95,6 +110,7 @@ Design principles (mission-critical):
   - Explicit protocols are mandatory
   - The enhancement itself is recorded as a decision
   - Existing content is preserved
+  - In --synthesize mode, nothing is overwritten: a reviewable proposal is produced
 USAGE
 }
 
@@ -124,11 +140,35 @@ When work is incomplete, blocked, or will continue in another session/thread:
 PROT
 )
 
+# The alignment-related instructions body used both for inline injection (existing
+# AGENTS.md) and inside synthesized proposals. Kept identical across both paths.
+PROGRESSIVE_DISCLOSURE_BLOCK=$(cat <<'PROG'
+## Progressive Disclosure
+
+Root AGENTS.md (this file) contains always-on rules.
+Detailed guidance lives in .agents/references/.
+Task-specific workflows live in .agents/skills/ (Zed Skills and compatible tools).
+Load deeper context only when the task requires it.
+PROG
+)
+
+DEFINITION_OF_DONE_BLOCK=$(cat <<'DOD'
+## Definition of Done
+
+Relevant tests pass.
+Lint / type checks are clean (where applicable).
+Decisions of substance are recorded in .agents/memory/decisions.md.
+If work continues elsewhere, a proper handoff file exists.
+current-status.md reflects reality.
+DOD
+)
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --version) echo "agent-enhance $VERSION"; exit 0 ;;
     -n|--dry-run) DRY_RUN=true; shift ;;
+    --synthesize) SYNTHESIZE=true; shift ;;
     --force-protocols) FORCE_PROTOCOLS=true; shift ;;
     --multi-agent) INCLUDE_MULTI_AGENT=true; shift ;;
     --sample-skill) INCLUDE_SAMPLE_SKILL=true; shift ;;
@@ -142,6 +182,9 @@ cd "$TARGET_DIR"
 
 info "Target repository: $TARGET_DIR"
 $DRY_RUN && info "Mode: DRY-RUN (no files will be written)"
+if $SYNTHESIZE; then
+  info "Mode: SYNTHESIZE (proposal only — live AGENTS.md will not be modified)"
+fi
 
 LANG=$(detect_language "$TARGET_DIR")
 info "Detected language/stack: $LANG"
@@ -408,6 +451,157 @@ EOF
   fi
 fi
 
+# ============================================================================
+# --synthesize mode: produce a reviewable proposal without touching AGENTS.md
+# ============================================================================
+if $SYNTHESIZE; then
+  TODAY=$(date +%Y-%m-%d)
+  PROPOSED="AGENTS.md.proposed"
+  HANDOFF="$HANDOFFS_DIR/$TODAY-synthesis-review.md"
+
+  # Discovery order follows the common/portable instruction loading order.
+  ALIGNMENT_FILES=(
+    "AGENTS.md"
+    "AGENT.md"
+    "CLAUDE.md"
+    ".cursorrules"
+    ".windsurfrules"
+    ".clinerules"
+    ".github/copilot-instructions.md"
+    "GEMINI.md"
+  )
+
+  # Build the section embedding the full content of every discovered file.
+  EMBEDDED=""
+  FOUND_ANY=false
+  for f in "${ALIGNMENT_FILES[@]}"; do
+    if [[ -f "$f" ]]; then
+      FOUND_ANY=true
+      EMBEDDED+="
+\`\`\`markdown
+--- Content of: $f ---
+$(cat "$f")
+--- End of: $f ---
+\`\`\`
+"
+    fi
+  done
+
+  if ! $FOUND_ANY; then
+    info "No existing alignment files found — nothing to synthesize. Live AGENTS.md untouched."
+  else
+    info "Existing alignment document(s) found — producing $PROPOSED"
+    TODAY2="$TODAY"
+    LANGX="$LANG"
+    PROPOSED_CONTENT=$(cat <<'PROP'
+# AGENTS.md — PROPOSAL — DO NOT APPLY UNVERIFIED
+
+- Status: PROPOSAL (review required)
+- Generated by: agent-enhance vVERSIONX_PLACEHOLDER
+- Date: DATE_X_PLACEHOLDER
+- Primary stack (detected): LANGX_PLACEHOLDER
+
+This is a proposed replacement for AGENTS.md. The live AGENTS.md has NOT been modified.
+Review the sections below (and the embedded original content at the end) and finalise.
+
+PROTOCOLX_PLACEHOLDER
+PROGRESSIVEX_PLACEHOLDER
+DODX_PLACEHOLDER
+## Original Alignment Content (for review)
+
+The following original files were found and are reproduced verbatim below. Nothing has
+been altered or destroyed.
+
+EMBEDDEDX_PLACEHOLDER
+## Review & Finalisation
+
+1. Open the embedded originals above and confirm the mandatory protocols and constraints
+   coexist with them without loss or contradiction.
+2. Edit conflicts or additions as needed.
+3. When satisfied, rename this file to AGENTS.md (or merge its contents) and delete this
+   PROPOSAL header.
+4. Record the decision in .agents/memory/decisions.md.
+PROP
+)
+    PROPOSED_CONTENT="${PROPOSED_CONTENT//VERSIONX_PLACEHOLDER/$VERSION}"
+    PROPOSED_CONTENT="${PROPOSED_CONTENT//DATE_X_PLACEHOLDER/$TODAY2}"
+    PROPOSED_CONTENT="${PROPOSED_CONTENT//LANGX_PLACEHOLDER/$LANGX}"
+    PROPOSED_CONTENT="${PROPOSED_CONTENT//PROTOCOLX_PLACEHOLDER/$PROTOCOL_BLOCK}"
+    PROPOSED_CONTENT="${PROPOSED_CONTENT//PROGRESSIVEX_PLACEHOLDER/$PROGRESSIVE_DISCLOSURE_BLOCK}"
+    PROPOSED_CONTENT="${PROPOSED_CONTENT//DODX_PLACEHOLDER/$DEFINITION_OF_DONE_BLOCK}"
+    PROPOSED_CONTENT="${PROPOSED_CONTENT//EMBEDDEDX_PLACEHOLDER/$EMBEDDED}"
+    write_proposed_file "$PROPOSED" "$PROPOSED_CONTENT"
+
+    HANDOFF_CONTENT=$(cat <<'HOF'
+Handoff — synthesis review — <TODAYX_PLACEHOLDER>
+Goal
+Review and finalise the proposed AGENTS.md produced by agent-enhance --synthesize.
+Current State
+
+Completed:
+
+Proposal written to AGENTS.md.proposed (the live AGENTS.md was not modified).
+Original alignment files were detected and embedded verbatim.
+
+In progress:
+
+Human/agent review of the proposal.
+
+Blocked / open questions:
+
+None known.
+
+
+Key Decisions Made
+The enhancement was recorded in .agents/memory/decisions.md.
+The chosen strategy is conservative: synthesize a proposal first, then apply after review.
+
+Files / Areas Touched
+
+AGENTS.md.proposed (new — requires review)
+
+Exact Next Actions for the Receiving Session
+
+1. Open AGENTS.md.proposed.
+2. Review the embedded original alignment content and confirm nothing was lost or
+    contradicted by the mandatory protocols.
+3. Adjust the proposal as needed.
+4. When satisfied, rename AGENTS.md.proposed to AGENTS.md and remove the PROPOSAL header.
+5. Record the finalisation decision in .agents/memory/decisions.md.
+
+Context the New Agent Must Load
+
+Always: .agents/memory/current-status.md and recent .agents/memory/decisions.md
+Relevant skills: (list if any)
+Relevant references: (list if any)
+Role charter (if multi-agent): (path)
+
+Additional Notes
+This review step exists to protect existing knowledge. Do not apply the proposal until a
+human or reviewing agent has confirmed it is conflict-free and complete.
+HOF
+)
+    HANDOFF_CONTENT="${HANDOFF_CONTENT//TODAYX_PLACEHOLDER/$TODAY}"
+    write_proposed_file "$HANDOFF" "$HANDOFF_CONTENT"
+  fi
+
+  echo
+  info "Enhancement complete (synthesize mode)."
+  if $DRY_RUN; then
+    info "This was a dry-run. Re-run without --dry-run to produce the proposal."
+  else
+    info "The live AGENTS.md was NOT modified."
+    if $FOUND_ANY; then
+      info "Review $PROPOSED and the handoff at $HANDOFF, then finalise."
+    fi
+  fi
+  exit 0
+fi
+
+# ============================================================================
+# Default mode: apply the structure and protocols (additive, idempotent)
+# ============================================================================
+
 # ----- AGENTS.md -----
 AGENTS_FILE="AGENTS.md"
 if [[ ! -f "$AGENTS_FILE" ]]; then
@@ -426,22 +620,11 @@ Prefer existing utilities and patterns already present in the codebase.
 All non-trivial architectural or process decisions must be recorded in .agents/memory/decisions.md.
 Session continuity relies on the files under .agents/. Do not treat chat history as durable state.
 
+MARKER_BEGIN_PLACEHOLDER
 PROTOCOL_PLACEHOLDER
-Progressive Disclosure
-
-Root AGENTS.md (this file) contains always-on rules.
-Detailed guidance lives in .agents/references/.
-Task-specific workflows live in .agents/skills/ (Zed Skills and compatible tools).
-Load deeper context only when the task requires it.
-
-Definition of Done
-
-Relevant tests pass.
-Lint / type checks are clean (where applicable).
-Decisions of substance are recorded in .agents/memory/decisions.md.
-If work continues elsewhere, a proper handoff file exists.
-current-status.md reflects reality.
-
+MARKER_END_PLACEHOLDER
+PROGRESSIVE_PLACEHOLDER
+DOD_PLACEHOLDER
 Further Reading
 
 Architecture notes: .agents/references/architecture.md
@@ -450,7 +633,11 @@ Handoff template: .agents/handoffs/template-handoff.md
 AGENTS
 )
   CONTENT="${CONTENT//LANG_PLACEHOLDER/$LANG}"
+  CONTENT="${CONTENT//MARKER_BEGIN_PLACEHOLDER/$MARKER_BEGIN}"
   CONTENT="${CONTENT//PROTOCOL_PLACEHOLDER/$PROTOCOL_BLOCK}"
+  CONTENT="${CONTENT//MARKER_END_PLACEHOLDER/$MARKER_END}"
+  CONTENT="${CONTENT//PROGRESSIVE_PLACEHOLDER/$PROGRESSIVE_DISCLOSURE_BLOCK}"
+  CONTENT="${CONTENT//DOD_PLACEHOLDER/$DEFINITION_OF_DONE_BLOCK}"
   write_file "$AGENTS_FILE" "$CONTENT"
 else
   if grep -qF "$MARKER_BEGIN" "$AGENTS_FILE" 2>/dev/null; then

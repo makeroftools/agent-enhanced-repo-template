@@ -85,11 +85,17 @@ agent-enhance --dry-run
 
 # Apply the core structure and protocols, plus optional components
 agent-enhance --multi-agent --sample-skill .
+
+# If existing alignment files (AGENT.md, .cursorrules, etc.) are present,
+# synthesize a reviewable AGENTS.md.proposed without touching the live file
+agent-enhance --synthesize
 ```
 
 It writes `.agents/memory/`, `.agents/handoffs/`, and `.agents/references/`, creates
 `AGENTS.md` (or injects the mandatory protocols between `AGENT-ENHANCE` markers if it
-already exists), and adds a thin `CLAUDE.md` bridge. See
+already exists), and adds a thin `CLAUDE.md` bridge. In `--synthesize` mode it instead
+produces `AGENTS.md.proposed` (embedding every discovered alignment file verbatim) plus a
+review handoff, and never modifies the live `AGENTS.md`. See
 [`docs/agent-enhance.md`](docs/agent-enhance.md) for the full reference.
 
 ---

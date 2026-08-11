@@ -1,10 +1,14 @@
 # Tests
 
-This directory contains the smoke-test suite for the Copier template.
+This directory contains the smoke-test suites for the Copier template and the
+`agent-enhance` script.
 
 ## Files
 - `generate_and_check.sh` — generates a project with recommended answers and asserts the
   required structure and protocols are present.
+- `agent-enhance_check.sh` — asserts the v0.2.0 behavioural guarantees of `bin/agent-enhance`
+  (syntax, version/help, empty-dir structure, protocol injection, `--synthesize`,
+  `--dry-run`, idempotency).
 
 ## Running
 From the template root:
@@ -12,9 +16,10 @@ From the template root:
 ```
 uv run copier copy --defaults --data-file tests/answers.yml . /tmp/check-output
 bash tests/generate_and_check.sh /tmp/check-output
+bash tests/agent-enhance_check.sh bin/agent-enhance
 ```
 
-The script exits non-zero on any structural failure.
+The scripts exit non-zero on any structural failure.
 
 ## Environmental note: `.copier-answers.yml`
 
