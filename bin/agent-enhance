@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # agent-enhance — Add AI-agent-native structure and protocols to an existing repository
-# Mission-critical: additive, idempotent, non-destructive, auditable
-# Version: 0.3.1
+# Mission-critical: additive, idempotent, non-destructive, auditable, reviewable
+# Version: 0.4.0
 # Source: https://github.com/makeroftools/agent-enhanced-repo-template
 
 set -euo pipefail
 
-VERSION="0.3.1"
+VERSION="0.4.0"
 
 DRY_RUN=false
 SYNTHESIZE=false
@@ -90,7 +90,7 @@ append_if_missing() {
 
 usage() {
   cat <<'USAGE'
-agent-enhance v0.3.1
+agent-enhance v0.4.0
 Add AI-agent-native structure and mandatory protocols to an existing repository.
 
 Usage: agent-enhance [OPTIONS] [TARGET_DIR]
@@ -100,10 +100,13 @@ Options:
   --synthesize               Produce AGENTS.md.proposed + review handoff instead of
                              modifying AGENTS.md. Uses broader safe discovery across
                              docs/, .github/, .cursor/, .agents/, adr/, decisions/,
-                             policies/, runbooks/ and similar. Small sources are
-                             inlined, large ones referenced, and a full discovery
-                             inventory is included. The live AGENTS.md is never
-                             overwritten.
+                             policies/, runbooks/ and similar. Discovered sources are
+                             classified into tiers: durable, high-signal material
+                             (canon, skills, current/active) is elevated into a
+                             prioritized synthesis; historical and archive material
+                             is inventoried and referenced, not bulk-inlined. A
+                             complete Discovery Inventory is always included. The
+                             live AGENTS.md is never overwritten.
   --allow-dirty              Permit operation on a dirty Git working tree
                              (default is to refuse)
   --multi-agent              Include role charters (coordinator, implementer, reviewer)
@@ -199,7 +202,7 @@ info "Detected language/stack: $LANG"
 
 if is_git_repo "$TARGET_DIR"; then
   info "Git repository detected"
-  # --- Git working-tree status gate (v0.3.1) ---
+  # --- Git working-tree status gate (v0.4.0) ---
   # Detect staged, unstaged, or untracked (non-ignored) changes. Clean tree proceeds;
   # dirty tree refuses by default unless --allow-dirty is given. This mirrors how
   # `git status --porcelain` behaves: placeholder-free and safe to parse.
@@ -497,6 +500,146 @@ DISCOVERY_SKIP_SUFFIXES=( ".lock" ".lockb" ".min.js" ".min.css" ".png" ".jpg" ".
 # Sources embedded in full when smaller than this threshold; larger ones are referenced.
 INLINE_THRESHOLD_BYTES=32768
 
+# ============================================================================
+# Source classification tiers for --synthesize (v0.4.0)
+# ============================================================================
+
+# Every discovered document is assigned a deterministic tier by path/name rules.
+# The mandatory priority order is Canon -> Current/Active -> Skills ->
+# Historical Archive -> General Docs -> Other. The first rule whose patterns
+# match a path decides its tier. Rules that read `*/<pattern>` match any single
+# path segment (e.g. `.agents/canon`, `docs`, `volley`).
+
+TIER_CANON="canon"
+TIER_CURRENT="current"
+TIER_SKILLS="skills"
+TIER_ARCHIVE="archive"
+TIER_DOCS="docs"
+TIER_OTHER="other"
+
+# High-signal canon filenames (matched on the basename). These are long-lived
+# identity / laws / architecture / toolchain documents.
+CANON_NAMES=(
+  "identity" "system-map" "toolchain" "gestalt" "constitution" "mission"
+  "philosophy" "principles" "values" "laws" "architecture"
+)
+
+# Pattern groups per tier. Each entry is a glob matched case-insensitively
+# against "/$rel" with `*` allowed for any substring.
+TIER_CANON_PATTERNS=(
+  ".agents/canon/"
+)
+TIER_CURRENT_PATTERNS=(
+  ".agents/memory/current-status.md"
+  ".agents/memory/decisions.md"
+  "volley/current.md"
+  "handoffs/*synthesis-review.md"
+  ".agents/current-status.md"
+)
+TIER_SKILLS_PATTERNS=(
+  ".agents/skills/"
+)
+
+# Case-insensitive containment test on a slash-padded path. `rel` is
+# normalised to lowercase and padded with slashes so segment-boundary patterns
+# like "*/volley/archive/*" match a root-level ".agents/..." unambiguously.
+path_has() {
+  local hay="$1" pat="$2"
+  hay="$(printf '%s' "$hay" | tr '[:upper:]' '[:lower:]')"
+  pat="$(printf '%s' "$pat" | tr '[:upper:]' '[:lower:]')"
+  case "/$hay/" in
+    $pat) return 0 ;;
+    *)    return 1 ;;
+  esac
+}
+
+# Classify a relative path into a tier. Deterministic; pure path-based.
+classify_tier() {
+  local rel="$1" base lower pat n
+  base="$(basename "$rel")"
+  lower="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')"
+
+  # 1. Canon directory or canon filename (highest priority).
+  for pat in "${TIER_CANON_PATTERNS[@]}"; do
+    path_has "$rel" "*${pat}*" && { echo "$TIER_CANON"; return; }
+  done
+
+  # 2. Current/active — must precede the archive rules so active handoffs and
+  #    the live volley are not archived.
+  for pat in "${TIER_CURRENT_PATTERNS[@]}"; do
+    path_has "$rel" "*${pat}*" && { echo "$TIER_CURRENT"; return; }
+  done
+
+  # 3. Skills before generic docs so a skill under docs/ is still a skill.
+  for pat in "${TIER_SKILLS_PATTERNS[@]}"; do
+    path_has "$rel" "*${pat}*" && { echo "$TIER_SKILLS"; return; }
+  done
+
+  # 4. Canon filename appearing outside .agents/ (e.g. docs/architecture.md).
+  for n in "${CANON_NAMES[@]}"; do
+    if [[ "$lower" == "$n" || "$lower" == "$n.md" || "$lower" == "$n.txt" ]]; then
+      echo "$TIER_CANON"; return
+    fi
+  done
+
+  # 5. Historical archive: volley archives, archived handoffs, past-session
+  #    memory, session logs. Any depth (.agents/volley/archive/... etc.).
+  if path_has "$rel" "*/volley/archive/*"; then
+    echo "$TIER_ARCHIVE"; return
+  fi
+  if path_has "$rel" "*/handoffs/*"; then
+    echo "$TIER_ARCHIVE"; return
+  fi
+  if path_has "$rel" "*/memory/archive/*"; then
+    echo "$TIER_ARCHIVE"; return
+  fi
+  if path_has "$rel" "*/sessions/*"; then
+    echo "$TIER_ARCHIVE"; return
+  fi
+  if path_has "$rel" "*/session-logs/*"; then
+    echo "$TIER_ARCHIVE"; return
+  fi
+
+  # 6. Basenames that record a specific session / dated handoff / volley.
+  if [[ "$lower" =~ ^volley[-_0-9] || "$lower" =~ ^session[-_0-9] || "$lower" =~ ^handoff[-_0-9] ]]; then
+    echo "$TIER_ARCHIVE"; return
+  fi
+
+  # 7. Docs directories, readme/license.
+  for pat in "${DISCOVERY_DIRS[@]}"; do
+    path_has "$rel" "*/${pat}/*" && { echo "$TIER_DOCS"; return; }
+  done
+  case "$lower" in
+    readme*|license*) echo "$TIER_DOCS"; return ;;
+  esac
+
+  echo "$TIER_OTHER"
+}
+
+# Human-readable tier label + disposition guidance (used in proposal).
+tier_label() {
+  case "$1" in
+    "$TIER_CANON")   echo "Canon (long-lived identity, laws, architecture, toolchain)" ;;
+    "$TIER_CURRENT") echo "Current / Active (latest status, active handoff, volley)" ;;
+    "$TIER_SKILLS")  echo "Skills (reusable agent workflows)" ;;
+    "$TIER_ARCHIVE") echo "Historical Archive (session logs, old handoffs, volleys)" ;;
+    "$TIER_DOCS")    echo "General Docs (broader documentation, references)" ;;
+    *)               echo "Other" ;;
+  esac
+}
+
+# Whether a tier permits full inlining (bulk) regardless of individual size.
+# Canon and Current may inline when under the size threshold; Skills may inline
+# (small SKILL.md files); Archive is inventory+reference only; Docs/Other follow
+# the size threshold.
+tier_allow_inline() {
+  case "$1" in
+    "$TIER_ARCHIVE") echo "no" ;;
+    *)               echo "yes" ;;
+  esac
+}
+
+
 # Checks whether a relative path should be treated as a candidate document.
 is_candidate() {
   local rel="$1"
@@ -582,47 +725,124 @@ gather_candidates() {
   done
 }
 
-# Render a single discovered source into the proposal body:
-#   - small files are inlined in full (with size)
-#   - larger files get a reference entry (path, size, excerpt line) — never dropped
+# Render a single discovered source into the proposal body, honouring its tier.
+#   - Canon / Current / Skills: inlined in full when under the size threshold.
+#   - Historical Archive: always inventory + reference (never bulk-inlined),
+#     regardless of individual size.
+#   - General Docs / Other: inlined when under the threshold, else referenced.
+# Extract a short excerpt that is guaranteed to be valid UTF-8. Reads up to
+# $1 bytes, collapses newlines to spaces, then runs the bytes through
+# `iconv -f UTF-8 -t UTF-8 -c`, which discards any incomplete trailing
+# multi-byte sequence so the excerpt never splits a UTF-8 character.
+safe_excerpt() {
+  local bytes="$1" rel="$2" s
+  s=$(head -c "$bytes" "$rel" 2>/dev/null | tr '
+' ' ' | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null)
+  printf '%s' "$s"
+}
+# Nothing is ever silently dropped — every file is inventoried and, unless
+# inlined, referenced by path with a short excerpt.
+archive_excerpt() {
+  local rel="$1"
+  printf '\n### %s (archived — referenced, %s bytes)\n\n' "$rel" "$(wc -c < "$rel" | tr -d ' ')"
+  printf 'Historical/archive material is kept for provenance and reviews, but is NOT\n'
+  printf 'bulk-inlined into the proposal. Open it directly for the full content.\n\n'
+  printf 'Full content available at: `%s`\n\n' "$rel"
+  local excerpt
+  excerpt=$(safe_excerpt 300 "$rel")
+  printf 'Excerpt: %s\n' "$excerpt"
+}
+
 render_source() {
-  local rel="$1" bytes excerpt
+  local rel="$1" bytes tier allow excerpt
   bytes=$(wc -c < "$rel" | tr -d ' ')
+  tier="$(classify_tier "$rel")"
+  allow="$(tier_allow_inline "$tier")"
+
+  if [[ "$allow" == "no" ]]; then
+    archive_excerpt "$rel"
+    printf '\n---\n'
+    return
+  fi
+
   if (( bytes <= INLINE_THRESHOLD_BYTES )); then
-    printf '\n### %s (inlined, %s bytes)\n\n' "$rel" "$bytes"
+    printf '\n### %s (inlined, %s bytes — tier: %s)\n\n' "$rel" "$bytes" "$tier"
     printf '```markdown\n'
     cat "$rel"
     printf '\n```\n'
   else
-    excerpt=$(head -c 400 "$rel" 2>/dev/null | tr '\n' ' ' | cut -c1-400)
-    printf '\n### %s (referenced, %s bytes — above inline threshold)\n\n' "$rel" "$bytes"
+    excerpt=$(safe_excerpt 400 "$rel")
+    printf '\n### %s (referenced, %s bytes — above inline threshold, tier: %s)\n\n' "$rel" "$bytes" "$tier"
     printf 'Full content available at: `%s` (do not inline; open directly).\n\n' "$rel"
     printf 'Excerpt: %s\n' "$excerpt"
   fi
   printf '\n---\n'
 }
 
-# Build the full Discovery Inventory (every considered path + disposition).
+# Build the full Discovery Inventory (every considered path + tier + disposition).
 build_inventory() {
-  local rel bytes disp inv=""
+  local rel bytes disp tier inv=""
   for rel in "${CANDIDATES[@]}"; do
     bytes=$(wc -c < "$rel" | tr -d ' ')
-    if (( bytes <= INLINE_THRESHOLD_BYTES )); then
+    tier="$(classify_tier "$rel")"
+    if [[ "$(tier_allow_inline "$tier")" == "no" ]]; then
+      disp="referenced (archive, $bytes B)"
+    elif (( bytes <= INLINE_THRESHOLD_BYTES )); then
       disp="inlined ($bytes B)"
     else
       disp="referenced ($bytes B)"
     fi
-    inv+="- \`$rel\` — $disp"$'\n'
+    inv+="- \`$rel\` — tier: $tier — $disp"$'\n'
   done
   printf '%s' "$inv"
 }
 
-# Build the body after the inventory header: each source, inlined or referenced.
+# Build the prioritized synthesis: only Canon / Skills / Current material is
+# elevated and inlined (or referenced) here. Historical archive and low-signal
+# material is NOT included here — it is covered by the Discovery Inventory and
+# the reference body.
+build_prioritized_synthesis() {
+  local rel tier body added=0
+  body=$'## Prioritized Synthesis (recommended core)
+
+'
+  body+=$'The following material is elevated from the Canon, Skills, and Current/Active
+'
+  body+=$'tiers. It is the recommended durable, high-signal core for the final AGENTS.md.
+'
+  body+=$'Historical-archive and low-signal material is intentionally not dumped here;
+'
+  body+=$'it remains fully inventoried and referenced below for review.
+'
+  body+=$'
+'
+  for rel in "${CANDIDATES[@]}"; do
+    tier="$(classify_tier "$rel")"
+    case "$tier" in
+      "$TIER_CANON"|"$TIER_CURRENT"|"$TIER_SKILLS")
+        body+="$(render_source "$rel")"$'
+'
+        added=1 ;;
+    esac
+  done
+  if (( added == 0 )); then
+    body+=$'No Canon / Skills / Current material was discovered. The inventory and reference
+'
+    body+=$'body below document every candidate; review them for the full set.
+'
+  fi
+  printf '%s' "$body"
+}
+
+# Build the full reference body: every source, each inlined or referenced per its
+# tier (archives are reference-only). This guarantees nothing is dropped while
+# keeping bulk history from dominating the document.
 build_body() {
   local rel body
   body=$'## Content from Existing / Discovered Sources\n\n'
-  body+=$'The material below is presented for review. Small files are inlined; larger ones\n'
-  body+=$'are referenced by path with an excerpt. Open referenced files to review them in full.\n'
+  body+=$'Every candidate is listed here per its tier. Canon / Current / Skills material is\n'
+  body+=$'inlined when small; archives are referenced by path (never bulk-inlined); other\n'
+  body+=$'tiers follow the size threshold. Open referenced files to review them in full.\n'
   body+=$'\n'
   for rel in "${CANDIDATES[@]}"; do
     body+="$(render_source "$rel")"$'\n'
@@ -654,11 +874,13 @@ if $SYNTHESIZE; then
     info "Discovered $COUNT candidate document(s)."
     # Build the discovery inventory (complete list of considered paths + disposition).
     INVENTORY="$(build_inventory)"
+    SYNTHESIS="$(build_prioritized_synthesis)"
 
-    # Build the body: discovery inventory header + each source (inline or referenced).
-    BODY=$'## Discovery Inventory (complete)\n\n'
+    # Build the complete reference body: discovery inventory + each source.
+    BODY=$'## Complete Discovery Inventory\n\n'
     BODY+=$'Every file below was considered during this synthesis. No discovered source is\n'
-    BODY+=$'silently dropped; each is either inlined below or referenced by path.\n\n'
+    BODY+=$'silently dropped; each has a tier and is either inlined below or referenced by\n'
+    BODY+=$'path. Historical-archive material is referenced (never bulk-inlined).\n\n'
     BODY+="$INVENTORY"$'\n'
     BODY+=$'---\n\n'
     BODY+="$(build_body)"
@@ -666,49 +888,54 @@ if $SYNTHESIZE; then
     info "Existing alignment/knowledge document(s) found — producing $PROPOSED"
     TODAY2="$TODAY"
     LANGX="$LANG"
-    BODYX="$BODY"
-    PROPOSED_CONTENT=$(cat <<'PROP'
-# AGENTS.md — PROPOSAL — DO NOT APPLY UNVERIFIED
 
-- Status: PROPOSAL (review required)
-- Generated by: agent-enhance vVERSIONX_PLACEHOLDER
-- Date: DATE_X_PLACEHOLDER
-- Primary stack (detected): LANGX_PLACEHOLDER
-
-This is a proposed replacement for AGENTS.md. The live AGENTS.md has NOT been modified.
-Review the content below (and, for large sources, open the referenced paths) and
-finalise deliberately. Do not accept this proposal blindly.
-
-PROTOCOLX_PLACEHOLDER
-PROGRESSIVEX_PLACEHOLDER
-DODX_PLACEHOLDER
-## Further Reading
-
-- Handoff template: .agents/handoffs/template-handoff.md
-- Architecture notes: .agents/references/architecture.md (when present)
-- Conventions: .agents/references/conventions.md (when present)
-
----
-
-BODYX_PLACEHOLDER
-## Review & Finalisation
-
-1. Open each referenced (non-inlined) source listed in the Discovery Inventory.
-2. Confirm the mandatory protocols coexist with the discovered material without loss
-   or contradiction.
-3. Decide what to retain, then edit conflicts or additions as needed.
-4. When satisfied, rename this file to AGENTS.md (or merge its contents) and delete the
-   PROPOSAL header.
-5. Record the decision in .agents/memory/decisions.md.
-PROP
-)
-    PROPOSED_CONTENT="${PROPOSED_CONTENT//VERSIONX_PLACEHOLDER/$VERSION}"
-    PROPOSED_CONTENT="${PROPOSED_CONTENT//DATE_X_PLACEHOLDER/$TODAY2}"
-    PROPOSED_CONTENT="${PROPOSED_CONTENT//LANGX_PLACEHOLDER/$LANGX}"
-    PROPOSED_CONTENT="${PROPOSED_CONTENT//PROTOCOLX_PLACEHOLDER/$PROTOCOL_BLOCK}"
-    PROPOSED_CONTENT="${PROPOSED_CONTENT//PROGRESSIVEX_PLACEHOLDER/$PROGRESSIVE_DISCLOSURE_BLOCK}"
-    PROPOSED_CONTENT="${PROPOSED_CONTENT//DODX_PLACEHOLDER/$DEFINITION_OF_DONE_BLOCK}"
-    PROPOSED_CONTENT="${PROPOSED_CONTENT//BODYX_PLACEHOLDER/$BODYX}"
+    # Assemble the proposal by concatenation (no placeholder substitution).
+    # Substituting placeholders with ${var//old/new} would let a literal `&`
+    # inside the variable content (common in inlined sources, e.g. `a && b`)
+    # be treated as "the matched substring", corrupting the output. Concatenation
+    # avoids that entirely.
+    PROPOSED_CONTENT=$'# AGENTS.md — PROPOSAL — DO NOT APPLY UNVERIFIED\n\n'
+    PROPOSED_CONTENT+=$'- Status: PROPOSAL (review required)\n'
+    PROPOSED_CONTENT+=$'- Generated by: agent-enhance v'"$VERSION"$'\n'
+    PROPOSED_CONTENT+=$'- Date: '"$TODAY2"$'\n'
+    PROPOSED_CONTENT+=$'- Primary stack (detected): '"$LANGX"$'\n\n'
+    PROPOSED_CONTENT+=$'This is a proposed replacement for AGENTS.md. The live AGENTS.md has NOT been modified.\n'
+    PROPOSED_CONTENT+=$'Review the content below (and, for large sources, open the referenced paths) and\n'
+    PROPOSED_CONTENT+=$'finalise deliberately. Do not accept this proposal blindly.\n\n'
+    PROPOSED_CONTENT+="$PROTOCOL_BLOCK"
+    PROPOSED_CONTENT+=$'\n\n'
+    PROPOSED_CONTENT+="$PROGRESSIVE_DISCLOSURE_BLOCK"
+    PROPOSED_CONTENT+=$'\n\n'
+    PROPOSED_CONTENT+="$DEFINITION_OF_DONE_BLOCK"
+    PROPOSED_CONTENT+=$'\n## Source Classification\n\n'
+    PROPOSED_CONTENT+=$'Discovered documents are classified into deterministic tiers so that durable,\n'
+    PROPOSED_CONTENT+=$'high-signal material is elevated while historical exhaust stays available under\n'
+    PROPOSED_CONTENT+=$'progressive disclosure. The tiers and their treatment:\n\n'
+    PROPOSED_CONTENT+=$'- **Canon** (long-lived identity, laws, architecture, toolchain) — high priority; preferred for extraction / inline.\n'
+    PROPOSED_CONTENT+=$'- **Current / Active** (latest status, active handoff, volley) — high priority; surfaced prominently.\n'
+    PROPOSED_CONTENT+=$'- **Skills** (reusable agent workflows) — high priority; listed and surfaced.\n'
+    PROPOSED_CONTENT+=$'- **Historical Archive** (session logs, volley archives, old handoffs) — inventoried and referenced; never bulk-inlined.\n'
+    PROPOSED_CONTENT+=$'- **General Docs** (broader docs, references) — inventoried; inlined only if small and high-signal.\n'
+    PROPOSED_CONTENT+=$'- **Other** — inventoried; referenced or minimal excerpt.\n\n'
+    PROPOSED_CONTENT+=$'The Prioritized Synthesis section below elevates only the Canon / Skills /\n'
+    PROPOSED_CONTENT+=$'Current tiers as the recommended core. Everything else remains fully inventoried\n'
+    PROPOSED_CONTENT+=$'and referenced in the Complete Discovery Inventory.\n\n'
+    PROPOSED_CONTENT+=$'---\n\n'
+    PROPOSED_CONTENT+="$SYNTHESIS"
+    PROPOSED_CONTENT+=$'\n## Further Reading\n\n'
+    PROPOSED_CONTENT+=$'- Handoff template: .agents/handoffs/template-handoff.md\n'
+    PROPOSED_CONTENT+=$'- Architecture notes: .agents/references/architecture.md (when present)\n'
+    PROPOSED_CONTENT+=$'- Conventions: .agents/references/conventions.md (when present)\n'
+    PROPOSED_CONTENT+=$'\n---\n\n'
+    PROPOSED_CONTENT+="$BODY"
+    PROPOSED_CONTENT+=$'\n## Review & Finalisation\n\n'
+    PROPOSED_CONTENT+=$'1. Open each referenced (non-inlined) source listed in the Discovery Inventory.\n'
+    PROPOSED_CONTENT+=$'2. Confirm the mandatory protocols coexist with the discovered material without loss\n'
+    PROPOSED_CONTENT+=$'   or contradiction.\n'
+    PROPOSED_CONTENT+=$'3. Decide what to retain, then edit conflicts or additions as needed.\n'
+    PROPOSED_CONTENT+=$'4. When satisfied, rename this file to AGENTS.md (or merge its contents) and delete the\n'
+    PROPOSED_CONTENT+=$'   PROPOSAL header.\n'
+    PROPOSED_CONTENT+=$'5. Record the decision in .agents/memory/decisions.md.\n'
     write_proposed_file "$PROPOSED" "$PROPOSED_CONTENT"
 
     HANDOFF_CONTENT=$(cat <<'HOF'

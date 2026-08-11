@@ -78,6 +78,7 @@ writes a review handoff under `.agents/handoffs/YYYY-MM-DD-synthesis-review.md`.
 
 ### Discovery behaviour (v0.3.0)
 
+
 - **Git-aware**: inside a git repository, discovery uses `git ls-files`; otherwise it
   falls back to `find`. Both paths de-duplicate and sort the candidate set.
 - **Candidate matching** (name or path, case-insensitive) on patterns such as
@@ -98,6 +99,52 @@ writes a review handoff under `.agents/handoffs/YYYY-MM-DD-synthesis-review.md`.
 - **Complete inventory**: the proposal opens with a Discovery Inventory listing every
   candidate path and its disposition (inlined or referenced), so a reviewer sees the
   full set of sources considered.
+
+### Source classification (v0.4.0)
+
+Every discovered document is assigned a deterministic **tier** from its path/name, so
+durable, high-signal material is elevated while historical exhaust stays available under
+progressive disclosure. Nothing is silently dropped — the complete inventory lists every
+candidate **with its tier**.
+
+| Tier | Intent | Treatment in proposal |
+| --- | --- | --- |
+| **Canon** | Long-lived identity, immutable laws, architecture, toolchain, core constraints | High priority. Preferred for extraction / full inline when small. Strongly candidate for the final `AGENTS.md`. |
+| **Current / Active** | Latest handoff, current status, active memory/decision log | High priority. Surfaced prominently. |
+| **Skills** | Reusable agent skills (`SKILL.md` etc.) | High priority. Listed and surfaced. |
+| **Historical Archive** | Session logs, volley archives, old handoffs, past-session memory | Inventory + reference only (path + short excerpt). Never bulk-inlined. |
+| **General Docs** | Broader documentation, API references, tutorials | Inventory + selective reference. Inline only if small and clearly high-signal. |
+| **Other** | Everything else that matched discovery | Inventory; reference or minimal excerpt. |
+
+Classification is path/name-driven and deterministic: `.agents/canon/`, `identity`,
+`system-map`, `toolchain`, etc. classify as **Canon**; `current-status.md`,
+`decisions.md`, the live `volley/current.md`, and active `*synthesis-review.md`
+handoffs classify as **Current**; `**/skills/` and `SKILL.md` classify as **Skills**;
+`**/volley/archive/**`, archived/dated handoffs, and past-session memory classify as
+**Historical Archive**. Other matched docs fall into **General Docs** or **Other**.
+
+### Proposal structure (v0.4.0)
+
+`AGENTS.md.proposed` is organized to stay reviewable on repositories with large history:
+
+1. **PROPOSAL header** — version, date, and an explicit “do not accept blindly” note.
+2. **Session Start + Handoff protocols** (mandatory, unchanged wording).
+3. **Progressive disclosure + Definition of Done**.
+4. **Prioritized Synthesis** — extracted/referenced material from **Canon + Skills +
+   Current/Active** tiers only (the recommended core). Historical-archive and
+   low-signal material is intentionally not dumped here.
+5. **Source Classification** table (above) documenting how each tier is treated.
+6. **Complete Discovery Inventory** — every candidate still listed with its tier and
+   disposition (inlined / referenced / archive-referenced).
+7. **Reference body** — each source per its tier; archives remain reference-only.
+8. **Further Reading / next actions** for the reviewer.
+
+### Size & context discipline (v0.4.0)
+
+- The existing 32 KiB inline threshold is retained for Canon / Current / Skills / Docs.
+- **Historical Archive material is never bulk-inlined**, regardless of individual file
+  size — it is inventoried and referenced (path + short excerpt only).
+- The goal is a reviewable proposal, not a dump of repository history.
 
 ```bash
 # Produce the proposal without modifying anything

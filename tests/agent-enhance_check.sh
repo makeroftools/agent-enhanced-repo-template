@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke-test for the `agent-enhance` v0.3.1 script.
+# Smoke-test for the `agent-enhance` v0.4.0 script.
 #
 # Usage: bash tests/agent-enhance_check.sh <path-to-bin/agent-enhance>
 #
@@ -10,6 +10,8 @@
 #   - existing AGENTS.md is preserved and protocols injected with markers
 #   - --synthesize produces AGENTS.md.proposed + handoff and never touches live AGENTS.md
 #   - --synthesize discovers broader documents and respects size/exclusion rules
+#   - --synthesize classifies sources into tiers and elevates canon/current/skills
+#   - historical-archive material is referenced, not bulk-inlined
 #   - --dry-run writes nothing
 #   - re-runs are idempotent
 set -euo pipefail
@@ -28,8 +30,8 @@ bash -n "$SCRIPT" || fail "bash -n failed"
 pass "syntactically valid"
 
 # --- 2. version / help ---
-[[ "$("$SCRIPT" --version)" == "agent-enhance 0.3.1" ]] || fail "--version"
-pass "--version reports 0.3.1"
+[[ "$("$SCRIPT" --version)" == "agent-enhance 0.4.0" ]] || fail "--version"
+pass "--version reports 0.4.0"
 "$SCRIPT" --help >/dev/null 2>&1 || fail "--help"
 pass "--help exits 0"
 
@@ -135,5 +137,29 @@ pass "dry-run wrote nothing"
 [ -f "$SYN/AGENTS.md.proposed" ] && [ ! -f "$SYN/AGENTS.md" ] || fail "idempotency structure broken"
 pass "re-run is idempotent (single handoff, live AGENTS still untouched)"
 
+
+# --- 8. tier classification: canon/current/skills elevated, archive referenced ---
+TIER="$BASE/tier"; mkdir -p "$TIER/.agents/canon" "$TIER/.agents/memory" \
+  "$TIER/.agents/volley/archive" "$TIER/.agents/skills/wf"
+printf '# Canon identity\nDurable laws.\n' > "$TIER/.agents/canon/identity.md"
+printf '# Status\ncurrent\n' > "$TIER/.agents/memory/current-status.md"
+printf '# Skill\nsync\n' > "$TIER/.agents/skills/wf/SKILL.md"
+printf '# Old session\nhistorical exhaust\n' > "$TIER/.agents/volley/archive/volley_session1.md"
+"$SCRIPT" --synthesize "$TIER" >/dev/null 2>&1 || fail "tier synthesize run"
+grep -q "## Prioritized Synthesis" "$TIER/AGENTS.md.proposed" || fail "proposal missing Prioritized Synthesis"
+grep -q "Canon identity" "$TIER/AGENTS.md.proposed" && grep -q "## Prioritized Synthesis" "$TIER/AGENTS.md.proposed" || fail "canon material not surfaced in proposal"
+# canon + current content appear (elevated); the archive file is NOT inlined verbatim.
+grep -q "Durable laws" "$TIER/AGENTS.md.proposed" || fail "canon/current content absent"
+# Archive must be reference-only: marked 'archived — referenced', NOT inlined in a code fence.
+grep -q "archived — referenced" "$TIER/AGENTS.md.proposed" || fail "archive not marked reference-only"
+if grep -q '```markdown.*volley_session1' "$TIER/AGENTS.md.proposed"; then
+  fail "archive content was bulk-inlined (must be reference-only)"
+fi
+grep -q "volley/archive/volley_session1.md" "$TIER/AGENTS.md.proposed" || fail "archive path missing from inventory"
+grep -q "tier: archive" "$TIER/AGENTS.md.proposed" || fail "archive tier not labelled in inventory"
+grep -q "tier: canon" "$TIER/AGENTS.md.proposed" || fail "canon tier not labelled in inventory"
+grep -q "## Complete Discovery Inventory" "$TIER/AGENTS.md.proposed" || fail "missing complete inventory"
+pass "tier classification: canon/current/skills elevated, archive referenced"
+
 echo
-echo "PASS: agent-enhance v0.3.1 behavioural checks verified."
+echo "PASS: agent-enhance v0.4.0 behavioural checks verified."
