@@ -68,12 +68,33 @@ agent-enhance /path/to/other/repo
 
 ## --synthesize: retrofit with a reviewable proposal
 
-When a repository already has alignment documents (`AGENTS.md`, `AGENT.md`, `CLAUDE.md`,
-`.cursorrules`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`,
-`GEMINI.md`), `--synthesize` does **not** touch the live `AGENTS.md`. Instead it produces
-`AGENTS.md.proposed` — a reviewable proposal combining the mandatory protocols with the
-full, unaltered content of every discovered alignment file — and writes a review handoff
-under `.agents/handoffs/YYYY-MM-DD-synthesis-review.md`.
+`--synthesize` does **not** touch the live `AGENTS.md`. Instead it performs a **broader,
+safe, bounded** discovery of candidate documents and produces `AGENTS.md.proposed` — a
+reviewable proposal combining the mandatory protocols with the discovered material — and
+writes a review handoff under `.agents/handoffs/YYYY-MM-DD-synthesis-review.md`.
+
+### Discovery behaviour (v0.3.0)
+
+- **Git-aware**: inside a git repository, discovery uses `git ls-files`; otherwise it
+  falls back to `find`. Both paths de-duplicate and sort the candidate set.
+- **Candidate matching** (name or path, case-insensitive) on patterns such as
+  `agent`, `claude`, `cursor`, `rule`, `instruction`, `convention`, `guideline`,
+  `standard`, `playbook`, `runbook`, `decision`, `adr`, `architecture`, `sop`,
+  `policy`, `prompt`. Well-known files (`AGENT.md`, `CLAUDE.md`, `.cursorrules`,
+  `.clinerules`, `.github/copilot-instructions.md`, `GEMINI.md`, …) are always
+  considered.
+- **Directories of interest** searched regardless of name: `docs/`, `.github/`,
+  `.cursor/`, `.agents/`, `adr/`, `decisions/`, `policies/`, `runbooks/`.
+- **Extensions**: `.md`, `.txt`, `.rst`, `.markdown`, and extensionless files matching
+  the name patterns.
+- **Hard exclusions**: `.git/`, `node_modules/`, `vendor/`, `dist/`, `build/`,
+  `__pycache__/`, `.venv/`, plus lockfiles, binaries, and minified assets.
+- **Size discipline**: files smaller than 32 KiB are inlined in full; larger files are
+  recorded by path with size and a short excerpt, with an explicit “full content
+  available at path” reference. Nothing discovered is silently dropped.
+- **Complete inventory**: the proposal opens with a Discovery Inventory listing every
+  candidate path and its disposition (inlined or referenced), so a reviewer sees the
+  full set of sources considered.
 
 ```bash
 # Produce the proposal without modifying anything

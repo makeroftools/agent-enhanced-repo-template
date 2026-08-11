@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # agent-enhance — Add AI-agent-native structure and protocols to an existing repository
 # Mission-critical: additive, idempotent, non-destructive, auditable
-# Version: 0.2.0
+# Version: 0.3.0
 # Source: https://github.com/makeroftools/agent-enhanced-repo-template
 
 set -euo pipefail
 
-VERSION="0.2.0"
+VERSION="0.3.0"
 
 DRY_RUN=false
 SYNTHESIZE=false
@@ -89,7 +89,7 @@ append_if_missing() {
 
 usage() {
   cat <<'USAGE'
-agent-enhance v0.2.0
+agent-enhance v0.3.0
 Add AI-agent-native structure and mandatory protocols to an existing repository.
 
 Usage: agent-enhance [OPTIONS] [TARGET_DIR]
@@ -97,8 +97,12 @@ Usage: agent-enhance [OPTIONS] [TARGET_DIR]
 Options:
   -n, --dry-run              Show what would be done without writing files
   --synthesize               Produce AGENTS.md.proposed + review handoff instead of
-                             modifying AGENTS.md; existing alignment files are preserved
-                             and embedded. The live AGENTS.md is never overwritten.
+                             modifying AGENTS.md. Uses broader safe discovery across
+                             docs/, .github/, .cursor/, .agents/, adr/, decisions/,
+                             policies/, runbooks/ and similar. Small sources are
+                             inlined, large ones referenced, and a full discovery
+                             inventory is included. The live AGENTS.md is never
+                             overwritten.
   --multi-agent              Include role charters (coordinator, implementer, reviewer)
   --sample-skill             Include a sample Skill under .agents/skills/
   -h, --help                 Show this help
@@ -109,7 +113,7 @@ Design principles (mission-critical):
   - Idempotent — safe to re-run
   - Explicit protocols are mandatory
   - The enhancement itself is recorded as a decision
-  - Existing content is preserved
+  - Existing content is preserved; nothing discovered may become invisible
   - In --synthesize mode, nothing is overwritten: a reviewable proposal is produced
 USAGE
 }
@@ -452,6 +456,164 @@ EOF
 fi
 
 # ============================================================================
+# Discovery helpers for --synthesize (broader, safe, bounded)
+# ============================================================================
+
+# Files whose names or paths match a knowledge-bearing pattern. Case-insensitive.
+# Matched against the basename and the full path so we pick up e.g. docs/architecture.md.
+DISCOVERY_PATTERNS=(
+  "agent" "claude" "cursor" "rule" "instruction" "convention"
+  "guideline" "standard" "playbook" "runbook" "decision" "adr"
+  "architecture" "sop" "policy" "prompt"
+)
+
+# Directories of interest: their contents are prioritised regardless of name.
+DISCOVERY_DIRS=( "docs" ".github" ".cursor" ".agents" "adr" "decisions" "policies" "runbooks" )
+
+# Extensions considered candidate documents.
+DISCOVERY_EXTS=( "md" "txt" "rst" "markdown" )
+
+# Hard exclusions: directories never entered, and filename suffixes never matched.
+DISCOVERY_SKIP_DIRS=( ".git" "node_modules" "vendor" "dist" "build" "__pycache__" ".venv" "venv" )
+DISCOVERY_SKIP_SUFFIXES=( ".lock" ".lockb" ".min.js" ".min.css" ".png" ".jpg" ".jpeg" ".gif" ".svg" ".ico" ".woff" ".woff2" ".ttf" ".pdf" ".zip" ".tar" ".gz" )
+
+# Sources embedded in full when smaller than this threshold; larger ones are referenced.
+INLINE_THRESHOLD_BYTES=32768
+
+# Checks whether a relative path should be treated as a candidate document.
+is_candidate() {
+  local rel="$1"
+  local base ext lower d
+  base="$(basename "$rel")"
+  # Treat leading-dot filenames (e.g. .cursorrules) as extensionless: the dot is a
+  # hidden-file marker, not an extension separator.
+  if [[ "$base" == .* ]]; then
+    ext=""
+  else
+    ext="${base##*.}"
+    [[ "$ext" == "$base" ]] && ext=""
+  fi
+
+  # Reject hard-skipped suffixes (lockfiles, minified assets, binaries, etc.).
+  local s
+  for s in "${DISCOVERY_SKIP_SUFFIXES[@]}"; do
+    case "$base" in
+      *"$s") return 1 ;;
+    esac
+  done
+
+  # A file is a candidate if its extension matches OR it is extensionless,
+  # AND (its basename or path matches a knowledge pattern OR it lives in a dir of interest).
+  local is_ext=false
+  if [[ -n "$ext" ]]; then
+    local e
+    for e in "${DISCOVERY_EXTS[@]}"; do
+      [[ "$ext" == "$e" ]] && { is_ext=true; break; }
+    done
+  else
+    is_ext=true  # extensionless files that match the name patterns count
+  fi
+  $is_ext || return 1
+
+  # Match basename OR path component against knowledge patterns (case-insensitive).
+  lower="$(printf '%s' "$base $rel" | tr '[:upper:]' '[:lower:]')"
+  local p d
+  for p in "${DISCOVERY_PATTERNS[@]}"; do
+    case "$lower" in
+      *"$p"*) return 0 ;;
+    esac
+  done
+  for d in "${DISCOVERY_DIRS[@]}"; do
+    case "/$rel/" in
+      *"/$d/"*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Gather candidate documents. Prefers git ls-files inside a git repo; falls back to find.
+# Emits one relative path per line, sorted, de-duplicated.
+gather_candidates() {
+  local list=""
+  if is_git_repo "$TARGET_DIR"; then
+    while IFS= read -r f; do
+      local rel
+      rel="$f"
+      # Skip anything git considers removed; only consider tracked paths that exist on disk.
+      [[ -f "$rel" ]] || continue
+      list+="$rel"$'\n'
+    done < <(git ls-files)
+  else
+    while IFS= read -r f; do
+      list+="$f"$'\n'
+    done < <(find . -type f -print | sed 's#^\./##')
+  fi
+  # De-duplicate and sort, then filter to candidates and hard exclusions.
+  printf '%s' "$list" | sort -u | while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    # Skip any path under a hard-excluded directory.
+    local skip=no d
+    for d in "${DISCOVERY_SKIP_DIRS[@]}"; do
+      case "/$rel/" in
+        *"/$d/"*) skip=yes ;;
+      esac
+    done
+    [[ "$skip" == "yes" ]] && continue
+    if is_candidate "$rel"; then
+      printf '%s\n' "$rel"
+    fi
+  done
+}
+
+# Render a single discovered source into the proposal body:
+#   - small files are inlined in full (with size)
+#   - larger files get a reference entry (path, size, excerpt line) — never dropped
+render_source() {
+  local rel="$1" bytes excerpt
+  bytes=$(wc -c < "$rel" | tr -d ' ')
+  if (( bytes <= INLINE_THRESHOLD_BYTES )); then
+    printf '\n### %s (inlined, %s bytes)\n\n' "$rel" "$bytes"
+    printf '```markdown\n'
+    cat "$rel"
+    printf '\n```\n'
+  else
+    excerpt=$(head -c 400 "$rel" 2>/dev/null | tr '\n' ' ' | cut -c1-400)
+    printf '\n### %s (referenced, %s bytes — above inline threshold)\n\n' "$rel" "$bytes"
+    printf 'Full content available at: `%s` (do not inline; open directly).\n\n' "$rel"
+    printf 'Excerpt: %s\n' "$excerpt"
+  fi
+  printf '\n---\n'
+}
+
+# Build the full Discovery Inventory (every considered path + disposition).
+build_inventory() {
+  local rel bytes disp inv=""
+  for rel in "${CANDIDATES[@]}"; do
+    bytes=$(wc -c < "$rel" | tr -d ' ')
+    if (( bytes <= INLINE_THRESHOLD_BYTES )); then
+      disp="inlined ($bytes B)"
+    else
+      disp="referenced ($bytes B)"
+    fi
+    inv+="- \`$rel\` — $disp"$'\n'
+  done
+  printf '%s' "$inv"
+}
+
+# Build the body after the inventory header: each source, inlined or referenced.
+build_body() {
+  local rel body
+  body=$'## Content from Existing / Discovered Sources\n\n'
+  body+=$'The material below is presented for review. Small files are inlined; larger ones\n'
+  body+=$'are referenced by path with an excerpt. Open referenced files to review them in full.\n'
+  body+=$'\n'
+  for rel in "${CANDIDATES[@]}"; do
+    body+="$(render_source "$rel")"$'\n'
+  done
+  printf '%s' "$body"
+}
+
+# ============================================================================
 # --synthesize mode: produce a reviewable proposal without touching AGENTS.md
 # ============================================================================
 if $SYNTHESIZE; then
@@ -459,40 +621,35 @@ if $SYNTHESIZE; then
   PROPOSED="AGENTS.md.proposed"
   HANDOFF="$HANDOFFS_DIR/$TODAY-synthesis-review.md"
 
-  # Discovery order follows the common/portable instruction loading order.
-  ALIGNMENT_FILES=(
-    "AGENTS.md"
-    "AGENT.md"
-    "CLAUDE.md"
-    ".cursorrules"
-    ".windsurfrules"
-    ".clinerules"
-    ".github/copilot-instructions.md"
-    "GEMINI.md"
-  )
+  # Broader, git-aware discovery. Gather a de-duplicated candidate list.
+  info "Discovering candidate documents (git-aware, bounded)"
+  CANDIDATES=()
+  while IFS= read -r rel; do
+    CANDIDATES+=( "$rel" )
+  done < <(gather_candidates)
 
-  # Build the section embedding the full content of every discovered file.
-  EMBEDDED=""
-  FOUND_ANY=false
-  for f in "${ALIGNMENT_FILES[@]}"; do
-    if [[ -f "$f" ]]; then
-      FOUND_ANY=true
-      EMBEDDED+="
-\`\`\`markdown
---- Content of: $f ---
-$(cat "$f")
---- End of: $f ---
-\`\`\`
-"
-    fi
-  done
-
-  if ! $FOUND_ANY; then
-    info "No existing alignment files found — nothing to synthesize. Live AGENTS.md untouched."
+  COUNT="${#CANDIDATES[@]}"
+  if (( COUNT == 0 )); then
+    info "No candidate documents discovered — nothing to synthesize. Live AGENTS.md untouched."
+    FOUND_ANY=false
   else
-    info "Existing alignment document(s) found — producing $PROPOSED"
+    FOUND_ANY=true
+    info "Discovered $COUNT candidate document(s)."
+    # Build the discovery inventory (complete list of considered paths + disposition).
+    INVENTORY="$(build_inventory)"
+
+    # Build the body: discovery inventory header + each source (inline or referenced).
+    BODY=$'## Discovery Inventory (complete)\n\n'
+    BODY+=$'Every file below was considered during this synthesis. No discovered source is\n'
+    BODY+=$'silently dropped; each is either inlined below or referenced by path.\n\n'
+    BODY+="$INVENTORY"$'\n'
+    BODY+=$'---\n\n'
+    BODY+="$(build_body)"
+
+    info "Existing alignment/knowledge document(s) found — producing $PROPOSED"
     TODAY2="$TODAY"
     LANGX="$LANG"
+    BODYX="$BODY"
     PROPOSED_CONTENT=$(cat <<'PROP'
 # AGENTS.md — PROPOSAL — DO NOT APPLY UNVERIFIED
 
@@ -502,25 +659,30 @@ $(cat "$f")
 - Primary stack (detected): LANGX_PLACEHOLDER
 
 This is a proposed replacement for AGENTS.md. The live AGENTS.md has NOT been modified.
-Review the sections below (and the embedded original content at the end) and finalise.
+Review the content below (and, for large sources, open the referenced paths) and
+finalise deliberately. Do not accept this proposal blindly.
 
 PROTOCOLX_PLACEHOLDER
 PROGRESSIVEX_PLACEHOLDER
 DODX_PLACEHOLDER
-## Original Alignment Content (for review)
+## Further Reading
 
-The following original files were found and are reproduced verbatim below. Nothing has
-been altered or destroyed.
+- Handoff template: .agents/handoffs/template-handoff.md
+- Architecture notes: .agents/references/architecture.md (when present)
+- Conventions: .agents/references/conventions.md (when present)
 
-EMBEDDEDX_PLACEHOLDER
+---
+
+BODYX_PLACEHOLDER
 ## Review & Finalisation
 
-1. Open the embedded originals above and confirm the mandatory protocols and constraints
-   coexist with them without loss or contradiction.
-2. Edit conflicts or additions as needed.
-3. When satisfied, rename this file to AGENTS.md (or merge its contents) and delete this
+1. Open each referenced (non-inlined) source listed in the Discovery Inventory.
+2. Confirm the mandatory protocols coexist with the discovered material without loss
+   or contradiction.
+3. Decide what to retain, then edit conflicts or additions as needed.
+4. When satisfied, rename this file to AGENTS.md (or merge its contents) and delete the
    PROPOSAL header.
-4. Record the decision in .agents/memory/decisions.md.
+5. Record the decision in .agents/memory/decisions.md.
 PROP
 )
     PROPOSED_CONTENT="${PROPOSED_CONTENT//VERSIONX_PLACEHOLDER/$VERSION}"
@@ -529,7 +691,7 @@ PROP
     PROPOSED_CONTENT="${PROPOSED_CONTENT//PROTOCOLX_PLACEHOLDER/$PROTOCOL_BLOCK}"
     PROPOSED_CONTENT="${PROPOSED_CONTENT//PROGRESSIVEX_PLACEHOLDER/$PROGRESSIVE_DISCLOSURE_BLOCK}"
     PROPOSED_CONTENT="${PROPOSED_CONTENT//DODX_PLACEHOLDER/$DEFINITION_OF_DONE_BLOCK}"
-    PROPOSED_CONTENT="${PROPOSED_CONTENT//EMBEDDEDX_PLACEHOLDER/$EMBEDDED}"
+    PROPOSED_CONTENT="${PROPOSED_CONTENT//BODYX_PLACEHOLDER/$BODYX}"
     write_proposed_file "$PROPOSED" "$PROPOSED_CONTENT"
 
     HANDOFF_CONTENT=$(cat <<'HOF'
@@ -541,7 +703,8 @@ Current State
 Completed:
 
 Proposal written to AGENTS.md.proposed (the live AGENTS.md was not modified).
-Original alignment files were detected and embedded verbatim.
+Candidate documents were discovered (git-aware), and each was either inlined in full
+or referenced by path. A complete Discovery Inventory is at the top of the proposal.
 
 In progress:
 
@@ -555,19 +718,18 @@ None known.
 Key Decisions Made
 The enhancement was recorded in .agents/memory/decisions.md.
 The chosen strategy is conservative: synthesize a proposal first, then apply after review.
-
 Files / Areas Touched
 
 AGENTS.md.proposed (new — requires review)
 
 Exact Next Actions for the Receiving Session
 
-1. Open AGENTS.md.proposed.
-2. Review the embedded original alignment content and confirm nothing was lost or
-    contradicted by the mandatory protocols.
-3. Adjust the proposal as needed.
-4. When satisfied, rename AGENTS.md.proposed to AGENTS.md and remove the PROPOSAL header.
-5. Record the finalisation decision in .agents/memory/decisions.md.
+1. Open AGENTS.md.proposed and read the Discovery Inventory for the full set of sources.
+2. For each referenced (non-inlined) source, open the path and review it in full.
+3. Confirm nothing was lost or contradicted by the mandatory protocols.
+4. Decide what to retain, adjust the proposal as needed.
+5. When satisfied, rename AGENTS.md.proposed to AGENTS.md and remove the PROPOSAL header.
+6. Record the finalisation decision in .agents/memory/decisions.md.
 
 Context the New Agent Must Load
 
