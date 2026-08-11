@@ -63,6 +63,37 @@ uv run copier copy \
 
 ---
 
+## Retrofitting an existing repository with `agent-enhance`
+
+New projects can use the Copier template above. To add the same agent-native structure and
+mandatory protocols to a repository that already exists, use the bundled `agent-enhance`
+binary. It is additive, idempotent, and non-destructive.
+
+### Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/makeroftools/agent-enhanced-repo-template/main/bin/agent-enhance \
+  -o ~/.local/bin/agent-enhance
+chmod +x ~/.local/bin/agent-enhance
+```
+
+### Usage
+
+```bash
+# Preview what would change (recommended first)
+agent-enhance --dry-run
+
+# Apply the core structure and protocols, plus optional components
+agent-enhance --multi-agent --sample-skill .
+```
+
+It writes `.agents/memory/`, `.agents/handoffs/`, and `.agents/references/`, creates
+`AGENTS.md` (or injects the mandatory protocols between `AGENT-ENHANCE` markers if it
+already exists), and adds a thin `CLAUDE.md` bridge. See
+[`docs/agent-enhance.md`](docs/agent-enhance.md) for the full reference.
+
+---
+
 ## Questionnaire
 
 | Question | Type | Default | Notes |

@@ -1,0 +1,494 @@
+#!/usr/bin/env bash
+# agent-enhance — Add AI-agent-native structure and protocols to an existing repository
+# Mission-critical: additive, idempotent, non-destructive, auditable
+# Version: 0.1.1
+# Source: https://github.com/makeroftools/agent-enhanced-repo-template
+
+set -euo pipefail
+
+VERSION="0.1.1"
+
+DRY_RUN=false
+FORCE_PROTOCOLS=false
+INCLUDE_MULTI_AGENT=false
+INCLUDE_SAMPLE_SKILL=false
+TARGET_DIR="."
+MARKER_BEGIN="<!-- AGENT-ENHANCE:BEGIN -->"
+MARKER_END="<!-- AGENT-ENHANCE:END -->"
+
+die()  { echo "error: $*" >&2; exit 1; }
+info() { echo "→ $*"; }
+warn() { echo "warning: $*" >&2; }
+
+is_git_repo() {
+  git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
+detect_language() {
+  local dir="$1"
+  if [[ -f "$dir/pyproject.toml" || -f "$dir/setup.py" || -f "$dir/requirements.txt" ]]; then
+    echo "Python"
+  elif [[ -f "$dir/package.json" ]]; then
+    echo "TypeScript / Node"
+  elif [[ -f "$dir/Cargo.toml" ]]; then
+    echo "Rust"
+  elif [[ -f "$dir/go.mod" ]]; then
+    echo "Go"
+  else
+    echo "Other"
+  fi
+}
+
+write_file() {
+  local path="$1"
+  local content="$2"
+  if [[ -f "$path" ]]; then
+    if [[ "$(cat "$path")" == "$content" ]]; then
+      return 0
+    fi
+  fi
+  if $DRY_RUN; then
+    info "[dry-run] would write: $path"
+    return 0
+  fi
+  mkdir -p "$(dirname "$path")"
+  printf '%s\n' "$content" > "$path"
+  info "wrote: $path"
+}
+
+append_if_missing() {
+  local path="$1"
+  local block="$2"
+  if [[ -f "$path" ]] && grep -qF "$MARKER_BEGIN" "$path" 2>/dev/null; then
+    return 0
+  fi
+  if $DRY_RUN; then
+    info "[dry-run] would inject protocols into: $path"
+    return 0
+  fi
+  {
+    printf '\n%s\n' "$MARKER_BEGIN"
+    printf '%s\n' "$block"
+    printf '%s\n' "$MARKER_END"
+  } >> "$path"
+  info "injected protocols into: $path"
+}
+
+usage() {
+  cat <<'USAGE'
+agent-enhance v0.1.1
+Add AI-agent-native structure and mandatory protocols to an existing repository.
+
+Usage: agent-enhance [OPTIONS] [TARGET_DIR]
+
+Options:
+  -n, --dry-run              Show what would be done without writing files
+  --force-protocols          Note that markers already exist (conservative)
+  --multi-agent              Include role charters (coordinator, implementer, reviewer)
+  --sample-skill             Include a sample Skill under .agents/skills/
+  -h, --help                 Show this help
+  --version                  Show version
+
+Design principles (mission-critical):
+  - Additive and non-destructive by default
+  - Idempotent — safe to re-run
+  - Explicit protocols are mandatory
+  - The enhancement itself is recorded as a decision
+  - Existing content is preserved
+USAGE
+}
+
+PROTOCOL_BLOCK=$(cat <<'PROT'
+## Session Start Protocol (Mandatory)
+
+On every new session or thread:
+
+1. Read `.agents/memory/current-status.md`.
+2. Read the recent entries in `.agents/memory/decisions.md`.
+3. If a relevant handoff exists in `.agents/handoffs/`, read the most recent applicable one.
+4. Summarize the relevant prior context before beginning substantive work.
+
+## Session End / Handoff Protocol (Mandatory)
+
+When work is incomplete, blocked, or will continue in another session/thread:
+
+1. Write a complete handoff file using the template in `.agents/handoffs/template-handoff.md`.
+2. Place it in `.agents/handoffs/` with a clear name (e.g., `YYYY-MM-DD-short-title.md`).
+3. Update `.agents/memory/current-status.md` to reflect the handoff.
+
+## Hard Constraints (Agent Continuity)
+
+- All non-trivial architectural or process decisions must be recorded in `.agents/memory/decisions.md`.
+- Session continuity relies on the files under `.agents/`. Do not treat chat history as durable state.
+- Prefer explicit handoffs over implicit continuity.
+PROT
+)
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --version) echo "agent-enhance $VERSION"; exit 0 ;;
+    -n|--dry-run) DRY_RUN=true; shift ;;
+    --force-protocols) FORCE_PROTOCOLS=true; shift ;;
+    --multi-agent) INCLUDE_MULTI_AGENT=true; shift ;;
+    --sample-skill) INCLUDE_SAMPLE_SKILL=true; shift ;;
+    -*) die "unknown option: $1" ;;
+    *) TARGET_DIR="$1"; shift ;;
+  esac
+done
+
+TARGET_DIR="$(cd "$TARGET_DIR" 2>/dev/null && pwd)" || die "cannot access target directory: $TARGET_DIR"
+cd "$TARGET_DIR"
+
+info "Target repository: $TARGET_DIR"
+$DRY_RUN && info "Mode: DRY-RUN (no files will be written)"
+
+LANG=$(detect_language "$TARGET_DIR")
+info "Detected language/stack: $LANG"
+
+if is_git_repo "$TARGET_DIR"; then
+  info "Git repository detected"
+else
+  warn "Not a git repository — continuing anyway (recommended to run inside a git repo)"
+fi
+
+AGENTS_DIR=".agents"
+MEMORY_DIR="$AGENTS_DIR/memory"
+HANDOFFS_DIR="$AGENTS_DIR/handoffs"
+AGENTS_ROLES_DIR="$AGENTS_DIR/agents"
+SKILLS_DIR="$AGENTS_DIR/skills"
+REFS_DIR="$AGENTS_DIR/references"
+
+if $DRY_RUN; then
+  info "[dry-run] would ensure directories under .agents/"
+else
+  mkdir -p "$MEMORY_DIR" "$HANDOFFS_DIR" "$REFS_DIR"
+  info "ensured directories under .agents/"
+fi
+
+# ----- decisions.md -----
+if [[ ! -f "$MEMORY_DIR/decisions.md" ]]; then
+  TODAY=$(date +%Y-%m-%d)
+  CONTENT=$(cat <<'DECISIONS'
+# Decisions Log
+
+This is an append-only drop-box for architectural, process, and significant technical decisions.
+Agents and humans must record decisions here so that future sessions have durable, auditable context.
+
+## Entry Format
+
+```markdown
+### YYYY-MM-DD — Short Title
+
+- **Decision**: One or two clear sentences.
+- **Rationale**: Why this choice was made.
+- **Alternatives considered**: Brief list (optional).
+- **Consequences / follow-ups**: What this implies.
+- **Related files / PRs**: Links or paths.
+- **Recorded by**: Human or agent role/name.
+```
+
+DATE_PLACEHOLDER — Agent Enhancement Applied
+
+Decision: Applied the agent-enhance structure and mandatory continuity protocols to this repository.
+Rationale: Enable durable session continuity, explicit handoffs, and auditable decision logging for AI agents and humans.
+Consequences / follow-ups: All future agent sessions must follow the Session Start and Handoff protocols. Keep decisions.md and current-status.md current.
+Related files / PRs: .agents/, AGENTS.md
+Recorded by: agent-enhance vVERSION_PLACEHOLDER
+DECISIONS
+)
+  CONTENT="${CONTENT//DATE_PLACEHOLDER/$TODAY}"
+  CONTENT="${CONTENT//VERSION_PLACEHOLDER/$VERSION}"
+  write_file "$MEMORY_DIR/decisions.md" "$CONTENT"
+else
+  info "exists (left untouched): $MEMORY_DIR/decisions.md"
+fi
+
+# ----- current-status.md -----
+if [[ ! -f "$MEMORY_DIR/current-status.md" ]]; then
+  write_file "$MEMORY_DIR/current-status.md" "$(cat <<'EOF'
+Current Status
+This file is the high-level, living summary of the repository’s agent-relevant state.
+Update it whenever the overall picture changes significantly.
+Project Goal
+(Describe the primary purpose of this repository.)
+Current Focus
+
+Agent-enhancement structure has been applied.
+Core protocols (Session Start, Handoff, decisions log) are now active.
+
+Active Work / Open Threads
+
+None recorded yet. Update this section when work begins.
+
+Known Blockers / Risks
+
+None recorded.
+
+Last Updated
+
+By: agent-enhance
+Note: Replace this section on first real update.
+EOF
+)"
+else
+  info "exists (left untouched): $MEMORY_DIR/current-status.md"
+fi
+
+# ----- handoff template -----
+if [[ ! -f "$HANDOFFS_DIR/template-handoff.md" ]]; then
+  write_file "$HANDOFFS_DIR/template-handoff.md" "$(cat <<'EOF'
+Handoff — <short-title> — <YYYY-MM-DD or thread-id>
+Goal
+What the previous session was trying to achieve.
+Current State
+
+Completed:
+...
+
+In progress:
+...
+
+Blocked / open questions:
+...
+
+
+Key Decisions Made
+Reference or quote relevant entries from .agents/memory/decisions.md.
+Files / Areas Touched
+
+List of primary files, packages, or worktrees involved.
+
+Exact Next Actions for the Receiving Session
+
+...
+...
+...
+
+Context the New Agent Must Load
+
+Always: .agents/memory/current-status.md and recent .agents/memory/decisions.md
+Relevant skills: (list if any)
+Relevant references: (list if any)
+Role charter (if multi-agent): (path)
+
+Additional Notes
+Any other information the receiving agent needs to continue safely and correctly.
+EOF
+)"
+else
+  info "exists (left untouched): $HANDOFFS_DIR/template-handoff.md"
+fi
+
+# ----- references -----
+if [[ ! -f "$REFS_DIR/architecture.md" ]]; then
+  write_file "$REFS_DIR/architecture.md" "$(cat <<'EOF'
+Architecture Notes
+High-level Structure
+(Expand this file with the real system architecture, key components, data flows, and boundaries.)
+Key Directories
+
+Source code: (document primary locations)
+Tests: (document)
+Agent infrastructure: .agents/ (skills, memory, handoffs, role charters, references)
+
+Design Principles Relevant to Agents
+
+Prefer small, reviewable changes.
+Keep durable state in version-controlled files under .agents/.
+Use progressive disclosure: load detailed references only when needed.
+EOF
+)"
+fi
+
+if [[ ! -f "$REFS_DIR/conventions.md" ]]; then
+  write_file "$REFS_DIR/conventions.md" "$(cat <<'EOF'
+Conventions
+Code Style
+Follow the project’s established tooling and existing patterns.
+Git & Collaboration
+
+Prefer small, focused commits and pull requests.
+Write clear commit messages that explain the “why”.
+Record non-trivial decisions in .agents/memory/decisions.md.
+
+Agent-specific Conventions
+
+Always execute the Session Start protocol.
+Never treat chat history as the source of truth for project state.
+Prefer explicit handoffs over implicit continuity.
+EOF
+)"
+fi
+
+# ----- multi-agent roles -----
+if $INCLUDE_MULTI_AGENT; then
+  $DRY_RUN || mkdir -p "$AGENTS_ROLES_DIR"
+  if [[ ! -f "$AGENTS_ROLES_DIR/coordinator.md" ]]; then
+    write_file "$AGENTS_ROLES_DIR/coordinator.md" "$(cat <<'EOF'
+Role: Coordinator
+Purpose
+Own overall progress, prioritization, and coordination across agents or sequential sessions.
+Responsibilities
+
+Maintain a clear view of current status and open work.
+Decide when to hand off to specialist roles.
+Ensure decisions are recorded and current-status.md stays truthful.
+
+Must Never
+
+Perform large-scale implementation that belongs to the Implementer role without justification.
+Leave incomplete handoffs.
+EOF
+)"
+  fi
+
+  if [[ ! -f "$AGENTS_ROLES_DIR/implementer.md" ]]; then
+    write_file "$AGENTS_ROLES_DIR/implementer.md" "$(cat <<'EOF'
+Role: Implementer
+Purpose
+Execute concrete changes according to an agreed plan or handoff. Prefer small, reviewable increments.
+Responsibilities
+
+Implement the requested changes following project conventions.
+Write or update tests as appropriate.
+Record any non-trivial decisions made during implementation.
+
+Must Never
+
+Expand scope significantly without updating the handoff.
+Leave the repository in a broken or untested state.
+Ignore the Session Start protocol.
+EOF
+)"
+  fi
+
+  if [[ ! -f "$AGENTS_ROLES_DIR/reviewer.md" ]]; then
+    write_file "$AGENTS_ROLES_DIR/reviewer.md" "$(cat <<'EOF'
+Role: Reviewer
+Purpose
+Examine proposed changes for correctness, adherence to conventions, security, and completeness.
+Responsibilities
+
+Review diffs against project standards and the stated goal.
+Check that tests are adequate and decisions of substance were recorded.
+Surface risks or deviations from established patterns.
+
+Must Never
+
+Directly implement large changes that belong to the Implementer role.
+Approve work that violates hard constraints in AGENTS.md.
+EOF
+)"
+  fi
+fi
+
+# ----- sample skill -----
+if $INCLUDE_SAMPLE_SKILL; then
+  SKILL_PATH="$SKILLS_DIR/example-skill/SKILL.md"
+  $DRY_RUN || mkdir -p "$(dirname "$SKILL_PATH")"
+  if [[ ! -f "$SKILL_PATH" ]]; then
+    write_file "$SKILL_PATH" "$(cat <<'EOF'
+name: example-skill
+description: "Illustrative skill demonstrating the expected format. Replace with real project workflows."
+Example Skill
+This is a placeholder Skill. Replace its content with a real, reusable workflow for this repository.
+When to use
+
+Use this skill when the task matches the description above.
+
+Instructions
+
+Confirm the goal and any constraints from AGENTS.md and the current handoff/status.
+Perform the core steps of the workflow.
+Record any decisions of substance in .agents/memory/decisions.md.
+Update status or write a handoff if the work is incomplete.
+EOF
+)"
+  fi
+fi
+
+# ----- AGENTS.md -----
+AGENTS_FILE="AGENTS.md"
+if [[ ! -f "$AGENTS_FILE" ]]; then
+  info "No AGENTS.md found — creating a new one"
+  CONTENT=$(cat <<'AGENTS'
+Agent Instructions
+Overview
+This repository has been enhanced with AI-agent-native structure and continuity protocols.
+Primary stack (detected): LANG_PLACEHOLDER.
+Commands
+(Add the exact build, test, lint, and type-check commands used by this project.)
+Hard Constraints
+
+Never commit secrets, credentials, or files listed in .gitignore.
+Prefer existing utilities and patterns already present in the codebase.
+All non-trivial architectural or process decisions must be recorded in .agents/memory/decisions.md.
+Session continuity relies on the files under .agents/. Do not treat chat history as durable state.
+
+PROTOCOL_PLACEHOLDER
+Progressive Disclosure
+
+Root AGENTS.md (this file) contains always-on rules.
+Detailed guidance lives in .agents/references/.
+Task-specific workflows live in .agents/skills/ (Zed Skills and compatible tools).
+Load deeper context only when the task requires it.
+
+Definition of Done
+
+Relevant tests pass.
+Lint / type checks are clean (where applicable).
+Decisions of substance are recorded in .agents/memory/decisions.md.
+If work continues elsewhere, a proper handoff file exists.
+current-status.md reflects reality.
+
+Further Reading
+
+Architecture notes: .agents/references/architecture.md
+Conventions: .agents/references/conventions.md
+Handoff template: .agents/handoffs/template-handoff.md
+AGENTS
+)
+  CONTENT="${CONTENT//LANG_PLACEHOLDER/$LANG}"
+  CONTENT="${CONTENT//PROTOCOL_PLACEHOLDER/$PROTOCOL_BLOCK}"
+  write_file "$AGENTS_FILE" "$CONTENT"
+else
+  if grep -qF "$MARKER_BEGIN" "$AGENTS_FILE" 2>/dev/null; then
+    info "AGENTS.md already contains agent-enhance markers — leaving protocols untouched"
+  else
+    info "AGENTS.md exists — injecting mandatory protocols with markers"
+    append_if_missing "$AGENTS_FILE" "$PROTOCOL_BLOCK"
+  fi
+fi
+
+# ----- CLAUDE.md bridge -----
+if [[ ! -f "CLAUDE.md" ]]; then
+  write_file "CLAUDE.md" "$(cat <<'EOF'
+Claude-specific entry point
+The canonical, tool-agnostic instructions live in AGENTS.md.
+@AGENTS.md
+Claude-specific notes
+
+Prefer the project’s established Skills under .agents/skills/ when a matching workflow exists.
+Respect the Session Start and Handoff protocols defined in AGENTS.md without exception.
+When in doubt about project state, re-read .agents/memory/current-status.md and recent decisions.
+EOF
+)"
+else
+  info "exists (left untouched): CLAUDE.md"
+fi
+
+echo
+info "Enhancement complete."
+if $DRY_RUN; then
+  info "This was a dry-run. Re-run without --dry-run to apply changes."
+else
+  info "Review the changes, then commit them."
+  info "Recommended commit message:"
+  echo "  chore: apply agent-enhance structure and continuity protocols"
+fi
+echo
+info "Next steps for agents and humans:"
+echo "  1. Read AGENTS.md (especially the Session Start and Handoff protocols)"
+echo "  2. Keep .agents/memory/current-status.md and decisions.md current"
+echo "  3. Use .agents/handoffs/ for any incomplete work that spans sessions"
