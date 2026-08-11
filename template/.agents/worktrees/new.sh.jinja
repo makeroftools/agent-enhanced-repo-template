@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+# Create an isolated Git worktree for a parallel agent.
+# Usage: .agents/worktrees/new.sh <branch-name>
+set -e
+
+if [ -z "$1" ]; then
+  echo "usage: $0 <branch-name>" >&2
+  exit 1
+fi
+
+BRANCH="$1"
+BASE="$(git rev-parse --show-toplevel)"
+WT_DIR="$BASE/.agents/worktrees/$BRANCH"
+
+git worktree add -b "$BRANCH" "$WT_DIR"
+echo "Worktree created at $WT_DIR on branch $BRANCH"

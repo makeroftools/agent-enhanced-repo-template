@@ -1,0 +1,30 @@
+# {{ project_name }}
+
+{{ project_description }}
+
+Primary language / stack: **{{ primary_language }}**
+
+This repository is agent-native. It uses `AGENTS.md` as the canonical, always-on
+instruction set and `.agents/` as the version-controlled home for skills, references,
+shared memory, handoffs, and (optionally) role charters and worktree helpers.
+
+## Quick start
+- Read `AGENTS.md` first — it defines the operating rules.
+- Review `.agents/memory/current-status.md` and `.agents/memory/decisions.md`.
+- See `.agents/references/` for architecture and conventions.
+
+## Structure
+- `AGENTS.md` — primary always-on agent instructions.
+- `CLAUDE.md` — thin bridge importing `AGENTS.md`.
+- `.agents/` — skills, references, memory, handoffs, agents, worktrees, volley.
+- `docs/` — long-form human + agent documentation.
+
+## Updating
+This project was generated with [Copier](https://copier.readthedocs.io/). To pull in
+upstream template changes without destroying local customizations:
+
+```
+copier update
+```
+
+See `docs/design-rationale.md` in the template for the reasoning behind this structure.

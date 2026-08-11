@@ -1,0 +1,9 @@
+project_name: smoke-test-project
+project_description: A smoke-test project for the agent-enhanced-repo-template.
+primary_language: python
+include_multi_agent: true
+include_sample_skill: true
+include_worktree_helpers: true
+include_volley_stubs: false
+author_name: Smoke Test
+initial_decision_note: Adopt the agent-native coordination structure.

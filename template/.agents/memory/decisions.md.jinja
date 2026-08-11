@@ -1,0 +1,21 @@
+# Decisions
+
+> Append-only log of architectural and process decisions. New agents load this on start.
+> Each entry is a structured block. Append, never rewrite history.
+
+## YYYY-MM-DD — Initial repository scaffold
+- **Agent/Role:** {{ author_name or "human + agent (setup)" }}
+- **Decision:** {{ initial_decision_note }}
+- **Rationale:** Repository-as-source-of-truth for durable, versioned, cross-session
+  coordination; progressive disclosure keeps always-on context short.
+- **Related files:** `AGENTS.md`, `.agents/`
+
+---
+
+<!-- Template for new entries:
+## YYYY-MM-DD — <short title>
+- **Agent/Role:** <who decided>
+- **Decision:** <what was decided>
+- **Rationale:** <why>
+- **Related files:** <paths>
+-->

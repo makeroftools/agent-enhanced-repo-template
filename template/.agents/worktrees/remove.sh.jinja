@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+# Remove an isolated Git worktree created by new.sh.
+# Usage: .agents/worktrees/remove.sh <branch-name>
+set -e
+
+if [ -z "$1" ]; then
+  echo "usage: $0 <branch-name>" >&2
+  exit 1
+fi
+
+BRANCH="$1"
+BASE="$(git rev-parse --show-toplevel)"
+WT_DIR="$BASE/.agents/worktrees/$BRANCH"
+
+git worktree remove "$WT_DIR"
+git branch -d "$BRANCH"
+echo "Worktree removed at $WT_DIR"

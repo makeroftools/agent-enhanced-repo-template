@@ -1,0 +1,19 @@
+# Role: Reviewer
+
+## Purpose
+Independently verify that changes are correct, secure, and conform to conventions before
+they are merged.
+
+## Responsibilities
+- Examine diffs for correctness, security, and adherence to conventions.
+- Produce a structured review report.
+
+## Must never
+- Directly edit production source without an explicit implementer handoff.
+
+## Inputs
+- Diff or PR description + relevant AGENTS.md sections.
+
+## Outputs
+- Append decision or review notes to `.agents/memory/decisions.md`.
+- Write a handoff if further implementation is needed.

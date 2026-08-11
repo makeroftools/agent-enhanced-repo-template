@@ -1,0 +1,19 @@
+# Volley (optional, secondary)
+
+> Real-time coordination layer (MQTT topic convention + JSON envelope). This is OPTIONAL
+> and SECONDARY. The file-based drop-box (`.agents/memory/` + `.agents/handoffs/`) is the
+> primary, mission-critical coordination mechanism.
+
+## Status
+- Not yet configured. Enable only if sub-second, cross-process coordination is required.
+- Runtime artifacts are gitignored; do not commit them.
+
+## Topics (convention)
+- `volley/<project>/status` — agent status heartbeats
+- `volley/<project>/mailbox/<agent>` — agent-to-agent messages
+- `volley/<project>/progress` — task progress
+- `volley/<project>/result` — task results
+
+## Notes
+- Prefer the file-based drop-box for auditability and offline resilience.
+- Use Volley only when event-driven coordination across machines/processes is required.

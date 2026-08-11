@@ -1,0 +1,109 @@
+# {{ project_name }} — Agent Instructions
+
+## Overview
+{{ project_description }}
+
+Primary language / stack: **{{ primary_language }}**
+
+This repository is agent-native. Version-controlled files under `.agents/` are the
+single source of truth for continuity and coordination. Ephemeral chat history is
+never authoritative.
+
+- Architecture: @.agents/references/architecture.md
+- Conventions: @.agents/references/conventions.md
+{% if primary_language == "python" %}- Testing: @.agents/references/testing.md{% endif %}
+
+## Commands (always use these)
+{% if primary_language == "python" %}
+- Install: `uv sync`
+- Test: `uv run pytest`
+- Lint / typecheck: `uv run ruff check .`
+- Single test / focused run: `uv run pytest tests/test_<name>.py`
+{% elif primary_language == "typescript" %}
+- Install: `npm install`
+- Test: `npm test`
+- Lint / typecheck: `npm run lint` and `npx tsc --noEmit`
+- Single test / focused run: `npx vitest run <path>`
+{% elif primary_language == "rust" %}
+- Build: `cargo build`
+- Test: `cargo test`
+- Lint / typecheck: `cargo clippy -- -D warnings` and `cargo check`
+- Single test / focused run: `cargo test <test_name>`
+{% elif primary_language == "go" %}
+- Build: `go build ./...`
+- Test: `go test ./...`
+- Lint / typecheck: `go vet ./...` and `gofmt -l .`
+- Single test / focused run: `go test ./... -run <TestName>`
+{% else %}
+- Install: (fill in)
+- Test: (fill in)
+- Lint / typecheck: (fill in)
+- Single test / focused run: (fill in)
+{% endif %}
+
+## Hard constraints (must never violate)
+- Do not modify files under `.agents/` without explicit instruction.
+- All changes to instruction and memory files must be reviewed; they are part of the operating rules.
+- Prefer existing utilities and conventions over new ones.
+- Never commit secrets or generated artifacts listed in `.gitignore`.
+- Never rely on chat history as durable state. Continuity lives in files.
+
+## Session Start Protocol (MANDATORY)
+Before doing any work in a new session, you MUST:
+1. Read `.agents/memory/current-status.md`.
+2. Read `.agents/memory/decisions.md`.
+3. Read any relevant handoff file under `.agents/handoffs/`.
+4. Summarize the current status, relevant prior decisions, and the immediate next
+   action before proceeding.
+
+## During Work
+- Keep changes scoped to the task at hand. Do not expand scope without recording it.
+- Before any non-trivial change, read the relevant section of `.agents/references/`
+  and the nearest `AGENTS.md`.
+- After any non-trivial decision, append a structured entry to
+  `.agents/memory/decisions.md` (append-only; never rewrite history).
+
+## Session End / Handoff Protocol (MANDATORY)
+Before ending a session with incomplete work, you MUST:
+1. Write a complete handoff file using the template at
+   `.agents/handoffs/template-handoff.md` and place it in `.agents/handoffs/`.
+2. Update `.agents/memory/current-status.md` to reflect the new state.
+3. Ensure any decisions made are recorded in `.agents/memory/decisions.md`.
+
+## Multi-Agent Coordination
+{% if include_multi_agent %}
+- Role charters are defined in `.agents/agents/` (coordinator, implementer, reviewer).
+  Respect their boundaries.
+- Prefer Git worktrees for isolation when parallel agents may edit overlapping files.
+{% if include_worktree_helpers %}
+- Worktree helpers live under `.agents/worktrees/`; use them to create and manage
+  isolated checkouts.
+{% endif %}
+- Coordinate via the shared memory files above; do not rely on ephemeral chat history.
+{% else %}
+- Multi-agent coordination is not currently enabled. If parallel agents are needed,
+  enable it and add role charters under `.agents/agents/`.
+{% endif %}
+{% if include_volley_stubs %}
+- Optional real-time coordination stubs live under `.agents/volley/`. The file-based
+  drop-box remains primary; Volley is secondary and optional only.
+{% endif %}
+
+## Progressive Disclosure
+This file is intentionally concise and always-on. Detailed guidance lives in
+`.agents/skills/` (loaded on demand) and `.agents/references/` (loaded when relevant).
+Do not expand this file into an encyclopedia.
+
+## Definition of Done
+- Tests pass.
+- Lint / typecheck clean.
+- Relevant decisions recorded in `.agents/memory/decisions.md`.
+- Handoff file written if the work is incomplete or will continue in another session.
+- `.agents/memory/current-status.md` updated.
+
+## Pointers
+- Skills: `.agents/skills/`
+- References: `.agents/references/`
+- Memory: `.agents/memory/`
+- Handoffs: `.agents/handoffs/`
+- Role charters: `.agents/agents/`

@@ -1,0 +1,17 @@
+# Conventions
+
+> Progressive-disclosure reference for coding and process conventions.
+
+## Code style
+- Follow the configured linter and formatter for the primary language.
+- Type hints / type annotations on all public interfaces.
+- Keep functions small and focused; prefer existing utilities over new ones.
+
+## Git / process
+- Commit messages: imperative mood, concise summary line.
+- Prefer Git worktrees for parallel agent work that may touch overlapping files.
+- All changes to `.agents/` instruction and memory files are reviewed.
+
+## Documentation
+- Root `AGENTS.md` stays concise (< 150 lines) and imperative.
+- Detail lives in `.agents/references/` and is loaded on demand.

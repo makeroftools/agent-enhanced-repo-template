@@ -1,0 +1,88 @@
+# Copier configuration for the agent-enhanced-repo-template.
+# Renders the `template/` directory into a new consumer project.
+# See docs/design-rationale.md for the reasoning behind these choices.
+
+_subdirectory: template
+_min_copier_version: "9.0.0"
+_templates_suffix: .jinja
+_message_after_copy: |
+  Your agent-native repository has been generated.
+
+  Next steps:
+    1. `cd {{ project_name }}` and `git init` (if not already a repository).
+    2. Read AGENTS.md — it is the canonical, always-on instruction set.
+    3. Review `.agents/memory/current-status.md` and `.agents/memory/decisions.md`.
+    4. Commit the scaffold, then begin work. Record decisions as you go.
+
+project_name:
+  type: str
+  help: Name of the new project (used in README, AGENTS.md, and package metadata).
+  default: my-agent-repo
+  validator: >-
+    {% if not (project_name | regex_search('^[a-z0-9][a-z0-9._-]*$')) %}
+    Project name must be lowercase, start with a letter or digit, and contain only
+    letters, digits, dots, underscores, or hyphens.
+    {% endif %}
+
+project_description:
+  type: str
+  help: One-line description of the project.
+  default: An AI-agent-native repository scaffolded with Copier.
+
+primary_language:
+  type: str
+  help: Primary language / stack. Determines the exact commands in AGENTS.md.
+  choices:
+    python:
+      value: python
+      help: Python (uv + pytest + ruff)
+    typescript:
+      value: typescript
+      help: TypeScript / Node.js (npm + vitest + eslint)
+    rust:
+      value: rust
+      help: Rust (cargo + cargo test + clippy)
+    go:
+      value: go
+      help: Go (go test + go vet + gofmt)
+    other:
+      value: other
+      help: Other / custom — you will fill in commands manually
+  default: python
+
+include_multi_agent:
+  type: bool
+  help: Include multi-agent role charters (coordinator, implementer, reviewer)?
+  default: true
+
+include_sample_skill:
+  type: bool
+  help: Include a sample Skill under .agents/skills/example-skill?
+  default: true
+
+include_worktree_helpers:
+  type: bool
+  help: Include Git worktree helper scripts under .agents/worktrees/?
+  default: true
+
+include_volley_stubs:
+  type: bool
+  help: Include optional Volley (real-time MQTT) stub files? Defaults to off; file-based drop-box is primary.
+  default: false
+
+author_name:
+  type: str
+  help: Author name used in the initial decisions.md entry.
+  default: ""
+
+initial_decision_note:
+  type: str
+  help: Optional note recorded as the first decision in decisions.md.
+  default: Adopt the agent-native coordination structure (AGENTS.md + .agents/).
+
+# Conditionally exclude optional files based on questionnaire answers.
+_exclude:
+  - "{% if not include_multi_agent %}.agents/agents/*.md{% endif %}"
+  - "{% if not include_sample_skill %}.agents/skills/example-skill/SKILL.md{% endif %}"
+  - "{% if not include_worktree_helpers %}.agents/worktrees/*.sh{% endif %}"
+  - "{% if not include_volley_stubs %}.agents/volley/README.md{% endif %}"

@@ -1,0 +1,29 @@
+# Testing
+
+> Progressive-disclosure reference for how this project is tested.
+{% if primary_language == "python" %}
+## Running tests
+- All: `uv run pytest`
+- Single test: `uv run pytest tests/test_<name>.py`
+- Focused run: `uv run pytest tests/test_<name>.py::test_<case>`
+{% elif primary_language == "typescript" %}
+## Running tests
+- All: `npm test`
+- Single test: `npx vitest run <path>`
+{% elif primary_language == "rust" %}
+## Running tests
+- All: `cargo test`
+- Single test: `cargo test <test_name>`
+{% elif primary_language == "go" %}
+## Running tests
+- All: `go test ./...`
+- Single test: `go test ./... -run <TestName>`
+{% else %}
+## Running tests
+- (Fill in the test commands for this stack.)
+{% endif %}
+
+## Conventions
+- Tests live under `tests/` mirroring the source layout.
+- Prefer behavior-focused tests over implementation details.
+- Keep tests fast and deterministic; avoid network calls in unit tests.
