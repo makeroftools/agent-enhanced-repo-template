@@ -77,18 +77,23 @@ curl -fsSL https://raw.githubusercontent.com/makeroftools/agent-enhanced-repo-te
 chmod +x ~/.local/bin/agent-enhance
 ```
 
+This installs permanently to `~/.local/bin/agent-enhance` (available on your `PATH`).
+
 ### Usage
 
 ```bash
 # Preview what would change (recommended first)
 agent-enhance --dry-run
 
+# Apply the core agent-native structure and protocols (default, plain invocation)
+agent-enhance .
+
 # Apply the core structure and protocols, plus optional components
 agent-enhance --multi-agent --sample-skill .
 
 # If existing alignment files (AGENT.md, .cursorrules, etc.) are present,
 # synthesize a reviewable AGENTS.md.proposed without touching the live file
-agent-enhance --synthesize
+agent-enhance --synthesize .
 ```
 
 It writes `.agents/memory/`, `.agents/handoffs/`, and `.agents/references/`, creates
