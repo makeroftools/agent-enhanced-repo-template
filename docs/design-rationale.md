@@ -49,3 +49,12 @@ memory locations. Nothing is left to chance or chat.
 `copier update` is supported. Optional files are excluded via `_exclude` so consumers can
 toggle components without breaking the template's structure. The mandatory core
 (AGENTS.md, memory, handoffs) is always rendered.
+
+## Environmental note: `.copier-answers.yml`
+
+Copier 9.17.1 in this environment does not auto-write `.copier-answers.yml` on
+`copier copy` (reproduced with a barebones template). This is environmental, not a
+template defect. Since `copier update` requires that answers file for `_src_path` /
+`_commit`, a true end-to-end update cannot be bootstrapped here. A real update test needs
+an environment that writes the answers file, or a manually generated answers file plus a
+pushed, resolvable tag (e.g. `v0.1.0`).
